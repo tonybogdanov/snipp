@@ -23,7 +23,7 @@ func newScreenshotPath() (string, error) {
 		return "", err
 	}
 
-	return filepath.Join(dir, fmt.Sprintf("snipp-%s.png", time.Now().Format("20060102-150405"))), nil
+	return filepath.Join(dir, fmt.Sprintf("%s.png", time.Now().Format("2006-01-02_15-04-05"))), nil
 }
 
 // saveScreenshot encodes img as PNG under ~/Pictures/Snipp and returns the

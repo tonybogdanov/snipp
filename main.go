@@ -5,11 +5,12 @@ import (
 )
 
 func main() {
+	initDPIAwareness()
 	systray.Run(onReady, onExit)
 }
 
 func onReady() {
-	systray.SetIcon(trayIcon)
+	systray.SetIcon(trayIcon())
 	systray.SetTitle("Snipp")
 	systray.SetTooltip("Snipp")
 

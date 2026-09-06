@@ -96,7 +96,13 @@ jobs:
             });
             for (const run of runs) {
               if (run.id === context.runId) continue;
-              await github.rest.actions.deleteWorkflowRun({ owner, repo, run_id: run.id });
+              try {
+                await github.rest.actions.deleteWorkflowRun({ owner, repo, run_id: run.id });
+              } catch (e) {
+                // another concurrent cleanup run may have already deleted
+                // it, or it may still be in progress; skip and move on.
+                console.log(`skipping run ${run.id}: ${e.message}`);
+              }
             }
 
             const artifacts = await github.paginate(github.rest.actions.listArtifactsForRepo, {
@@ -105,5 +111,10 @@ jobs:
             });
             for (const artifact of artifacts) {
               if (artifact.workflow_run && artifact.workflow_run.id === context.runId) continue;
-              await github.rest.actions.deleteArtifact({ owner, repo, artifact_id: artifact.id });
+              try {
+                await github.rest.actions.deleteArtifact({ owner, repo, artifact_id: artifact.id });
+              } catch (e) {
+                // another concurrent cleanup run may have already deleted it.
+                console.log(`skipping artifact ${artifact.id}: ${e.message}`);
+              }
             }

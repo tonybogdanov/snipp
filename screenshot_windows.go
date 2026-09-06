@@ -26,11 +26,13 @@ var (
 )
 
 const (
-	smCXScreen   = 0
-	smCYScreen   = 1
-	srcCopy      = 0x00CC0020
-	biRGB        = 0
-	dibRGBColors = 0
+	smXVirtualScreen  = 76
+	smYVirtualScreen  = 77
+	smCXVirtualScreen = 78
+	smCYVirtualScreen = 79
+	srcCopy           = 0x00CC0020
+	biRGB             = 0
+	dibRGBColors      = 0
 )
 
 type bitmapInfoHeader struct {
@@ -60,14 +62,21 @@ func doScreenshot() (string, error) {
 	return saveScreenshot(img)
 }
 
-// captureScreen grabs the full desktop via GDI BitBlt.
+// captureScreen grabs the full virtual desktop (every monitor, at each
+// monitor's true physical resolution — see initDPIAwareness) via GDI
+// BitBlt. The virtual screen's origin can be negative (a monitor placed
+// left of or above the primary one), so it's read explicitly rather than
+// assuming (0,0).
 func captureScreen() (image.Image, error) {
-	width, _, _ := procGetSystemMetrics.Call(uintptr(smCXScreen))
-	height, _, _ := procGetSystemMetrics.Call(uintptr(smCYScreen))
+	originX, _, _ := procGetSystemMetrics.Call(uintptr(smXVirtualScreen))
+	originY, _, _ := procGetSystemMetrics.Call(uintptr(smYVirtualScreen))
+	width, _, _ := procGetSystemMetrics.Call(uintptr(smCXVirtualScreen))
+	height, _, _ := procGetSystemMetrics.Call(uintptr(smCYVirtualScreen))
 	w, h := int(width), int(height)
 	if w == 0 || h == 0 {
 		return nil, errors.New("could not determine screen size")
 	}
+	ox, oy := int32(originX), int32(originY)
 
 	desktop, _, _ := procGetDesktopWindow.Call()
 	srcDC, _, _ := procGetDC.Call(desktop)
@@ -82,7 +91,7 @@ func captureScreen() (image.Image, error) {
 	oldObj, _, _ := procSelectObject.Call(memDC, bitmap)
 	defer procSelectObject.Call(memDC, oldObj)
 
-	ok, _, _ := procBitBlt.Call(memDC, 0, 0, uintptr(w), uintptr(h), srcDC, 0, 0, uintptr(srcCopy))
+	ok, _, _ := procBitBlt.Call(memDC, 0, 0, uintptr(w), uintptr(h), srcDC, uintptr(ox), uintptr(oy), uintptr(srcCopy))
 	if ok == 0 {
 		return nil, errors.New("BitBlt failed")
 	}

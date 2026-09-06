@@ -17,16 +17,18 @@ import (
 // with no explanation of what was happening.
 func run() {
 	runtime.LockOSThread()
-	procSetProcessDPIAware.Call()
 
 	hInstance, _, _ := procGetModuleHandleW.Call(0)
 
 	className, _ := syscall.UTF16PtrFromString("SnippInstallerWindow")
 	cursor, _, _ := procLoadCursorW.Call(0, uintptr(idcArrow))
+	icon := loadAppIcon()
 
 	wc := wndClassEx{
 		lpfnWndProc:   syscall.NewCallback(wndProc),
 		hInstance:     syscall.Handle(hInstance),
+		hIcon:         icon,
+		hIconSm:       icon,
 		hCursor:       syscall.Handle(cursor),
 		hbrBackground: syscall.Handle(colorWindow + 1),
 		lpszClassName: className,
@@ -133,6 +135,28 @@ func setWindowText(hwnd uintptr, text string) {
 	procSetWindowTextW.Call(hwnd, uintptr(unsafe.Pointer(p)))
 }
 
+// loadAppIcon loads the embedded icon via LoadImageW, which only reads from
+// a file path, so the embedded bytes are spilled to a temp file first (safe
+// to remove immediately after: LoadImageW copies the bitmap into its own
+// GDI object before returning).
+func loadAppIcon() syscall.Handle {
+	tmp, err := os.CreateTemp("", "snipp-icon-*.ico")
+	if err != nil {
+		return 0
+	}
+	defer os.Remove(tmp.Name())
+
+	_, werr := tmp.Write(appIcon)
+	tmp.Close()
+	if werr != nil {
+		return 0
+	}
+
+	path, _ := syscall.UTF16PtrFromString(tmp.Name())
+	h, _, _ := procLoadImageW.Call(0, uintptr(unsafe.Pointer(path)), imageIcon, 0, 0, lrLoadFromFile|lrDefaultSize)
+	return syscall.Handle(h)
+}
+
 var (
 	user32   = syscall.NewLazyDLL("user32.dll")
 	kernel32 = syscall.NewLazyDLL("kernel32.dll")
@@ -155,7 +179,7 @@ var (
 	procLoadCursorW          = user32.NewProc("LoadCursorW")
 	procGetSystemMetrics     = user32.NewProc("GetSystemMetrics")
 	procInitCommonControlsEx = comctl32.NewProc("InitCommonControlsEx")
-	procSetProcessDPIAware   = user32.NewProc("SetProcessDPIAware")
+	procLoadImageW           = user32.NewProc("LoadImageW")
 )
 
 const (
@@ -191,6 +215,10 @@ const (
 	colorWindow = 5
 
 	idClose = 1001
+
+	imageIcon      = 1
+	lrLoadFromFile = 0x00000010
+	lrDefaultSize  = 0x00000040
 )
 
 var (
