@@ -19,7 +19,7 @@ Download and run in one step:
 
 ```powershell
 curl.exe -Lo snipp-installer.exe https://github.com/tonybogdanov/snipp/releases/latest/download/snipp-installer.exe
-snipp-installer.exe
+.\snipp-installer.exe
 ```
 
 ```bash
