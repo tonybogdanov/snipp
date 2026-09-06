@@ -8,6 +8,33 @@ import (
 	"path/filepath"
 )
 
+// run shows a pulsating zenity progress dialog while the install happens,
+// then a confirmation dialog with a close button — if zenity isn't
+// available it just installs silently rather than failing.
+func run() {
+	zenity, err := exec.LookPath("zenity")
+	if err != nil {
+		install()
+		return
+	}
+
+	progress := exec.Command(zenity, "--progress", "--pulsate", "--no-cancel",
+		"--title=Snipp", "--text=Installing Snipp...")
+	stdin, err := progress.StdinPipe()
+	if err != nil || progress.Start() != nil {
+		install()
+		return
+	}
+
+	install()
+
+	stdin.Write([]byte("100\n"))
+	stdin.Close()
+	progress.Wait()
+
+	exec.Command(zenity, "--info", "--title=Snipp", "--text=Snipp is installed and running.").Run()
+}
+
 // install places the embedded binary in ~/.local/bin, registers it to
 // autostart at login via the XDG autostart spec, kills any already-running
 // instance so the new binary takes effect immediately, and starts it.

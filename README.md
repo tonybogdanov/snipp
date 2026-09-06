@@ -12,36 +12,22 @@ spec).
 
 ## Install
 
-The easiest way is the installer — download it, run it, done: it installs
-Snipp (or updates an existing install to the new version), registers it to
-autostart at login, and starts it immediately. No prompts, no flags.
-
 - Windows: https://github.com/tonybogdanov/snipp/releases/latest/download/snipp-installer.exe
-  (installs to `%LOCALAPPDATA%\Snipp`, autostarts via the
-  `HKCU\...\CurrentVersion\Run` registry key)
 - Linux: https://github.com/tonybogdanov/snipp/releases/latest/download/snipp-installer
-  (installs to `~/.local/bin`, autostarts via an XDG `~/.config/autostart`
-  entry)
 
-If you'd rather manage the binary yourself, plain (non-installing) builds
-are also published:
+Download and run in one step:
 
-- Windows: https://github.com/tonybogdanov/snipp/releases/latest/download/snipp.exe
-- Linux: https://github.com/tonybogdanov/snipp/releases/latest/download/snipp
-
-Or build from source:
-
-```sh
-git clone git@github.com:tonybogdanov/snipp.git
-cd snipp
-go build -o snipp .        # Linux
-# or, on Windows:
-./bin/build-windows.ps1    # -> artifacts/snipp.exe, artifacts/snipp-installer.exe
+```powershell
+curl.exe -Lo snipp-installer.exe https://github.com/tonybogdanov/snipp/releases/latest/download/snipp-installer.exe
+snipp-installer.exe
 ```
 
-Run the resulting binary — it has no window, just a tray icon. Right-click
-(or on Linux, however your DE surfaces the menu) for "Take Screenshot" and
-"Quit".
+```bash
+curl -Lo snipp-installer https://github.com/tonybogdanov/snipp/releases/latest/download/snipp-installer && chmod +x snipp-installer && ./snipp-installer
+```
+
+Installs (or updates) Snipp, registers it to autostart at login, and starts
+it right away — no prompts.
 
 ## Releases
 
