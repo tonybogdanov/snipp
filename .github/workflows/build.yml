@@ -3,7 +3,6 @@ name: Build
 on:
   push:
     branches: [master]
-    tags: ['[0-9]*.[0-9]*.[0-9]*']
   pull_request:
   workflow_dispatch:
 
@@ -53,7 +52,7 @@ jobs:
 
   release:
     needs: [build-windows, build-linux]
-    if: github.ref_type == 'tag'
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -68,15 +67,18 @@ jobs:
           name: snipp-linux
           path: artifacts
 
+      - name: Short sha
+        id: sha
+        run: echo "short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
       - name: Create release
         uses: softprops/action-gh-release@v3
         with:
-          name: ${{ github.ref_name }}
+          tag_name: ${{ steps.sha.outputs.short }}
+          name: ${{ steps.sha.outputs.short }}
           make_latest: true
           files: |
-            artifacts/snipp.exe
             artifacts/snipp-installer.exe
-            artifacts/snipp
             artifacts/snipp-installer
 
   cleanup:

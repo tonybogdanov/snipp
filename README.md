@@ -31,11 +31,9 @@ it right away — no prompts.
 
 ## Releases
 
-Each push of an `X.Y.Z` tag builds both platforms and publishes a GitHub
-release with the plain binaries and installers attached, marked as the
-`latest` release. To cut one, run `bin/release.ps1` — it asks whether it's
-a major, minor, or bugfix release, bumps the version accordingly, and
-tags/pushes it.
+Every push to `master` builds both platforms and publishes a GitHub release
+with the installers attached, named after the short commit hash and marked
+as the `latest` release.
 
 ## Requirements
 
