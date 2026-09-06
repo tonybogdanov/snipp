@@ -47,7 +47,11 @@ func saveScreenshot(img image.Image) (string, error) {
 }
 
 // saveScreenshotFile copies an already-captured PNG (e.g. one produced by
-// the xdg-desktop-portal) into ~/Pictures/Snipp and returns the new path.
+// the xdg-desktop-portal, which writes its own file such as
+// ~/Pictures/Screenshot.png and hands back a URI to it) into
+// ~/Pictures/Snipp and returns the new path. srcPath is removed afterwards —
+// it only exists as the portal's transient output for this one request, and
+// leaving it behind would duplicate every screenshot into Pictures itself.
 func saveScreenshotFile(srcPath string) (string, error) {
 	path, err := newScreenshotPath()
 	if err != nil {
@@ -69,5 +73,9 @@ func saveScreenshotFile(srcPath string) (string, error) {
 	if _, err := io.Copy(dst, src); err != nil {
 		return "", err
 	}
+
+	src.Close()
+	os.Remove(srcPath)
+
 	return path, nil
 }

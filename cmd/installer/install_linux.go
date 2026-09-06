@@ -10,8 +10,11 @@ import (
 )
 
 // run shows a pulsating zenity progress dialog while the install happens,
-// then a confirmation dialog with a close button — if zenity isn't
-// available it just installs silently rather than failing.
+// then updates that same dialog's text in place to report completion —
+// rather than closing it and opening a second confirmation dialog, which
+// looked like two different, inconsistent windows. Once installed, the user
+// dismisses it via the window's own close button. If zenity isn't available
+// it just installs silently rather than failing.
 func run() {
 	zenity, err := exec.LookPath("zenity")
 	if err != nil {
@@ -20,12 +23,9 @@ func run() {
 	}
 
 	iconPath := writeTempIcon()
-	if iconPath != "" {
-		defer os.Remove(iconPath)
-	}
 
 	args := []string{"--progress", "--pulsate", "--no-cancel",
-		"--auto-close", "--title=Snipp", "--text=Installing Snipp..."}
+		"--title=Snipp", "--text=Installing Snipp..."}
 	if iconPath != "" {
 		args = append(args, "--window-icon="+iconPath)
 	}
@@ -37,37 +37,19 @@ func run() {
 		return
 	}
 
+	if iconPath != "" {
+		// zenity reads --window-icon once at startup; give it a moment
+		// before cleaning up the temp file rather than racing it.
+		go func() {
+			time.Sleep(2 * time.Second)
+			os.Remove(iconPath)
+		}()
+	}
+
 	install()
 
-	stdin.Write([]byte("100\n"))
+	stdin.Write([]byte("# Snipp is installed and running.\n"))
 	stdin.Close()
-	waitOrKill(progress)
-
-	infoArgs := []string{"--info", "--title=Snipp", "--text=Snipp is installed and running."}
-	if iconPath != "" {
-		infoArgs = append(infoArgs, "--window-icon="+iconPath)
-	}
-	exec.Command(zenity, infoArgs...).Run()
-}
-
-// waitOrKill waits for the progress dialog to close on its own (--auto-close
-// once fed "100"), but a pulsating dialog ignores that percentage and some
-// zenity versions don't reliably exit on stdin EOF either — so it's killed
-// outright after a short grace period rather than risking it lingering
-// behind the confirmation dialog, which is what made installs look stuck.
-func waitOrKill(cmd *exec.Cmd) {
-	done := make(chan struct{})
-	go func() {
-		cmd.Wait()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		cmd.Process.Kill()
-		<-done
-	}
 }
 
 // writeTempIcon spills the embedded icon to a temp file, since zenity's
