@@ -75,8 +75,6 @@ jobs:
             artifacts/snipp
 
   cleanup:
-    needs: [build-windows, build-linux]
-    if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Delete old runs and artifacts
