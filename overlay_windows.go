@@ -191,13 +191,22 @@ func showFreezeOverlay(img image.Image) {
 
 	procSetTimer.Call(overlayHwndMain, overlayTimerID, uintptr(overlayDuration/time.Millisecond), 0)
 
+	// GetMessage(NULL, ...) returns every message posted to any window this
+	// thread owns, not just the overlay's — Windows attaches its own hidden
+	// helper windows (IME, tooltips, ...) to the same thread queue, and
+	// those can have their own timers. Matching only the message code here
+	// would let an unrelated WM_TIMER (e.g. from one of those windows,
+	// coincidentally sharing our timer ID) close the overlay almost
+	// instantly instead of after overlayDuration, so the hwnd/timer ID must
+	// match ours too.
 	var m msgTOv
 	for {
 		ret, _, _ := procGetMessageW.Call(uintptr(unsafe.Pointer(&m)), 0, 0, 0)
 		if int32(ret) <= 0 {
 			break
 		}
-		if m.message == wmTimerOv || m.message == wmOverlayEscape {
+		if m.hwnd == overlayHwndMain && (m.message == wmOverlayEscape ||
+			(m.message == wmTimerOv && m.wParam == overlayTimerID)) {
 			break
 		}
 		procTranslateMessage.Call(uintptr(unsafe.Pointer(&m)))
