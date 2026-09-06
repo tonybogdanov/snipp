@@ -1,0 +1,42 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        run: go build -ldflags "-H=windowsgui" -o snipp.exe .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: snipp-windows
+          path: snipp.exe
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        run: go build -o snipp-linux .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: snipp-linux
+          path: snipp-linux

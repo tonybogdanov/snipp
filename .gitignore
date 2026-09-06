@@ -1,0 +1,9 @@
+/snipp
+/snipp.exe
+/snipp-linux
+*.exe
+*.test
+*.out
+
+.idea/
+.vscode/
