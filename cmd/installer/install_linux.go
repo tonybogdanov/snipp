@@ -15,6 +15,15 @@ import (
 // looked like two different, inconsistent windows. Once installed, the user
 // dismisses it via the window's own close button. If zenity isn't available
 // it just installs silently rather than failing.
+//
+// Known limitation: the dock/taskbar icon during install is zenity's own
+// generic icon, not Snipp's. --window-icon only sets the icon painted
+// inside the dialog and its _NET_WM_ICON pixmap; docks like GNOME Shell's
+// instead resolve the taskbar icon from a .desktop file matched by the
+// window's app id, which zenity hardcodes to itself — not something a
+// flag can override. Fixing it for real means dropping zenity for a GUI
+// toolkit we control (e.g. cgo + GTK), which isn't worth it for a
+// few-second, install-time-only dialog.
 func run() {
 	zenity, err := exec.LookPath("zenity")
 	if err != nil {
