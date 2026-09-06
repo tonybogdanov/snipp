@@ -42,8 +42,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Build
-        shell: pwsh
-        run: ./bin/build-linux.ps1
+        run: bash bin/build-linux.sh
 
       - uses: actions/upload-artifact@v7
         with:
