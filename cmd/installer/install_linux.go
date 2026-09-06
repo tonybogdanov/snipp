@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 )
 
 // run shows a pulsating zenity progress dialog while the install happens,
@@ -18,8 +19,18 @@ func run() {
 		return
 	}
 
-	progress := exec.Command(zenity, "--progress", "--pulsate", "--no-cancel",
-		"--title=Snipp", "--text=Installing Snipp...")
+	iconPath := writeTempIcon()
+	if iconPath != "" {
+		defer os.Remove(iconPath)
+	}
+
+	args := []string{"--progress", "--pulsate", "--no-cancel",
+		"--auto-close", "--title=Snipp", "--text=Installing Snipp..."}
+	if iconPath != "" {
+		args = append(args, "--window-icon="+iconPath)
+	}
+
+	progress := exec.Command(zenity, args...)
 	stdin, err := progress.StdinPipe()
 	if err != nil || progress.Start() != nil {
 		install()
@@ -30,9 +41,49 @@ func run() {
 
 	stdin.Write([]byte("100\n"))
 	stdin.Close()
-	progress.Wait()
+	waitOrKill(progress)
 
-	exec.Command(zenity, "--info", "--title=Snipp", "--text=Snipp is installed and running.").Run()
+	infoArgs := []string{"--info", "--title=Snipp", "--text=Snipp is installed and running."}
+	if iconPath != "" {
+		infoArgs = append(infoArgs, "--window-icon="+iconPath)
+	}
+	exec.Command(zenity, infoArgs...).Run()
+}
+
+// waitOrKill waits for the progress dialog to close on its own (--auto-close
+// once fed "100"), but a pulsating dialog ignores that percentage and some
+// zenity versions don't reliably exit on stdin EOF either — so it's killed
+// outright after a short grace period rather than risking it lingering
+// behind the confirmation dialog, which is what made installs look stuck.
+func waitOrKill(cmd *exec.Cmd) {
+	done := make(chan struct{})
+	go func() {
+		cmd.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		cmd.Process.Kill()
+		<-done
+	}
+}
+
+// writeTempIcon spills the embedded icon to a temp file, since zenity's
+// --window-icon only accepts a file path, not raw bytes.
+func writeTempIcon() string {
+	tmp, err := os.CreateTemp("", "snipp-icon-*.png")
+	if err != nil {
+		return ""
+	}
+	if _, err := tmp.Write(appIcon); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		return ""
+	}
+	tmp.Close()
+	return tmp.Name()
 }
 
 // install places the embedded binary in ~/.local/bin, registers it to

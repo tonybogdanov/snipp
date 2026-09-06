@@ -23,12 +23,23 @@ func trayIcon() []byte {
 }
 
 // isDarkTheme is best-effort: GNOME (and anything sharing its settings
-// schema, e.g. Cinnamon/Unity) exposes this directly; anything else falls
-// back to the light icon rather than failing.
+// schema, e.g. Cinnamon/Unity) exposes this directly via color-scheme, but
+// that key only reflects the newer light/dark switch — many setups (and
+// most non-GNOME environments still using GNOME's settings schema) instead
+// select a dark variant purely by gtk-theme name (e.g. "Adwaita-dark",
+// "Yaru-dark"), leaving color-scheme at "default" while the tray itself is
+// dark. Check both, falling back to the light icon rather than failing.
 func isDarkTheme() bool {
-	out, err := exec.Command("gsettings", "get", "org.gnome.desktop.interface", "color-scheme").Output()
+	if gsettingsContains("color-scheme", "dark") {
+		return true
+	}
+	return gsettingsContains("gtk-theme", "dark")
+}
+
+func gsettingsContains(key, substr string) bool {
+	out, err := exec.Command("gsettings", "get", "org.gnome.desktop.interface", key).Output()
 	if err != nil {
 		return false
 	}
-	return strings.Contains(string(out), "dark")
+	return strings.Contains(strings.ToLower(string(out)), substr)
 }
