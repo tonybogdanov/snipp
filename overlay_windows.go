@@ -15,6 +15,7 @@ var (
 
 	procGetModuleHandleW    = kernel32.NewProc("GetModuleHandleW")
 	procEnumDisplayMonitors = user32.NewProc("EnumDisplayMonitors")
+	procGetMonitorInfoW     = user32.NewProc("GetMonitorInfoW")
 	procRegisterClassExW    = user32.NewProc("RegisterClassExW")
 	procCreateWindowExW     = user32.NewProc("CreateWindowExW")
 	procUnregisterClassW    = user32.NewProc("UnregisterClassW")
@@ -102,20 +103,56 @@ var (
 // monitors enumerates every connected monitor's absolute screen rectangle
 // via EnumDisplayMonitors.
 func monitors() ([]image.Rectangle, error) {
-	var rects []image.Rectangle
-	cb := syscall.NewCallback(func(hMonitor, hdc, lprc, lParam uintptr) uintptr {
-		r := (*winRect)(unsafe.Pointer(lprc))
-		rects = append(rects, image.Rect(int(r.Left), int(r.Top), int(r.Right), int(r.Bottom)))
-		return 1
-	})
-	procEnumDisplayMonitors.Call(0, 0, cb, 0)
-	if len(rects) == 0 {
-		return nil, errors.New("no monitors found")
+	mons, err := enumMonitors()
+	if err != nil {
+		return nil, err
+	}
+	rects := make([]image.Rectangle, len(mons))
+	for i, m := range mons {
+		rects[i] = m.rect
 	}
 	return rects, nil
 }
 
+type winMonitor struct {
+	rect   image.Rectangle
+	device string
+}
+
 type winRect struct{ Left, Top, Right, Bottom int32 }
+
+type monitorInfoExW struct {
+	cbSize    uint32
+	rcMonitor winRect
+	rcWork    winRect
+	dwFlags   uint32
+	szDevice  [32]uint16
+}
+
+// enumMonitors enumerates every connected monitor's absolute screen
+// rectangle together with its device name (e.g. "\\.\DISPLAY1"), the latter
+// needed to open a per-monitor device context — see captureScreen in
+// screenshot_windows.go for why that matters on mixed/scaled-DPI setups.
+func enumMonitors() ([]winMonitor, error) {
+	var mons []winMonitor
+	cb := syscall.NewCallback(func(hMonitor, hdc, lprc, lParam uintptr) uintptr {
+		var mi monitorInfoExW
+		mi.cbSize = uint32(unsafe.Sizeof(mi))
+		procGetMonitorInfoW.Call(hMonitor, uintptr(unsafe.Pointer(&mi)))
+
+		r := (*winRect)(unsafe.Pointer(lprc))
+		mons = append(mons, winMonitor{
+			rect:   image.Rect(int(r.Left), int(r.Top), int(r.Right), int(r.Bottom)),
+			device: syscall.UTF16ToString(mi.szDevice[:]),
+		})
+		return 1
+	})
+	procEnumDisplayMonitors.Call(0, 0, cb, 0)
+	if len(mons) == 0 {
+		return nil, errors.New("no monitors found")
+	}
+	return mons, nil
+}
 
 // showFreezeOverlay paints img (tinted 25% white) across a borderless,
 // always-on-top window per monitor so the desktop appears frozen, grabbing
@@ -130,9 +167,16 @@ func showFreezeOverlay(img image.Image) {
 		return
 	}
 
-	originX, _, _ := procGetSystemMetrics.Call(uintptr(smXVirtualScreen))
-	originY, _, _ := procGetSystemMetrics.Call(uintptr(smYVirtualScreen))
-	ox, oy := int(originX), int(originY)
+	// The crop origin must match captureScreen's own coordinate space
+	// exactly (the union of monitors(), top-left corner) rather than
+	// GetSystemMetrics' virtual-screen metrics — those are anchored to the
+	// primary monitor's DPI and can disagree with each monitor's true
+	// physical rect on a mixed/scaled-DPI setup.
+	unionOrigin := screenRects[0]
+	for _, r := range screenRects[1:] {
+		unionOrigin = unionOrigin.Union(r)
+	}
+	ox, oy := unionOrigin.Min.X, unionOrigin.Min.Y
 
 	hInstance, _, _ := procGetModuleHandleW.Call(0)
 	className, _ := syscall.UTF16PtrFromString("SnippOverlayWindow")
@@ -148,11 +192,8 @@ func showFreezeOverlay(img image.Image) {
 
 	var hwnds []uintptr
 	imgBounds := img.Bounds()
-	unionRect := screenRects[0]
 
 	for _, sr := range screenRects {
-		unionRect = unionRect.Union(sr)
-
 		crop := image.Rect(sr.Min.X-ox, sr.Min.Y-oy, sr.Max.X-ox, sr.Max.Y-oy).Intersect(imgBounds)
 		dib := buildOverlayDIB(tintWhite(img, crop))
 
@@ -182,8 +223,8 @@ func showFreezeOverlay(img image.Image) {
 	procSetForegroundWindow.Call(overlayHwndMain)
 	procSetCapture.Call(overlayHwndMain)
 	procClipCursor.Call(uintptr(unsafe.Pointer(&winRect{
-		Left: int32(unionRect.Min.X), Top: int32(unionRect.Min.Y),
-		Right: int32(unionRect.Max.X), Bottom: int32(unionRect.Max.Y),
+		Left: int32(unionOrigin.Min.X), Top: int32(unionOrigin.Min.Y),
+		Right: int32(unionOrigin.Max.X), Bottom: int32(unionOrigin.Max.Y),
 	})))
 
 	hHook, _, _ := procSetWindowsHookExW.Call(whKeyboardLl, syscall.NewCallback(lowLevelKeyboardProc), hInstance, 0)

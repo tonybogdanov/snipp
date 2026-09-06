@@ -11,11 +11,7 @@ import (
 var (
 	gdi32 = syscall.NewLazyDLL("gdi32.dll")
 
-	procGetDesktopWindow = user32.NewProc("GetDesktopWindow")
-	procGetDC            = user32.NewProc("GetDC")
-	procReleaseDC        = user32.NewProc("ReleaseDC")
-	procGetSystemMetrics = user32.NewProc("GetSystemMetrics")
-
+	procCreateDCW              = gdi32.NewProc("CreateDCW")
 	procCreateCompatibleDC     = gdi32.NewProc("CreateCompatibleDC")
 	procCreateCompatibleBitmap = gdi32.NewProc("CreateCompatibleBitmap")
 	procSelectObject           = gdi32.NewProc("SelectObject")
@@ -26,13 +22,9 @@ var (
 )
 
 const (
-	smXVirtualScreen  = 76
-	smYVirtualScreen  = 77
-	smCXVirtualScreen = 78
-	smCYVirtualScreen = 79
-	srcCopy           = 0x00CC0020
-	biRGB             = 0
-	dibRGBColors      = 0
+	srcCopy      = 0x00CC0020
+	biRGB        = 0
+	dibRGBColors = 0
 )
 
 type bitmapInfoHeader struct {
@@ -54,38 +46,75 @@ type bitmapInfo struct {
 	Colors [1]uint32
 }
 
-// captureScreen grabs the full virtual desktop (every monitor, at each
-// monitor's true physical resolution — see initDPIAwareness) via GDI
-// BitBlt. The virtual screen's origin can be negative (a monitor placed
-// left of or above the primary one), so it's read explicitly rather than
-// assuming (0,0).
+// captureScreen grabs every monitor at its own true physical resolution and
+// composites them into one image, sized and laid out to match monitors()
+// exactly (both derive from the same EnumDisplayMonitors enumeration).
+//
+// Each monitor is captured from its own device context (CreateDCW on that
+// monitor's device name) rather than one BitBlt over the whole "virtual
+// screen" via GetDesktopWindow's DC. The latter is anchored to the primary
+// monitor's DPI: on a mixed/scaled-DPI setup, GDI silently rescales
+// non-primary monitors to fit that shared coordinate grid, so a captured
+// slice for such a monitor doesn't match that monitor's real pixel
+// dimensions from EnumDisplayMonitors — which is exactly what showed up as
+// a stretched/shrunk freeze overlay on scaled displays. Per-monitor device
+// contexts use that monitor's own native pixel grid, sidestepping the
+// rescale entirely.
 func captureScreen() (image.Image, error) {
-	originX, _, _ := procGetSystemMetrics.Call(uintptr(smXVirtualScreen))
-	originY, _, _ := procGetSystemMetrics.Call(uintptr(smYVirtualScreen))
-	width, _, _ := procGetSystemMetrics.Call(uintptr(smCXVirtualScreen))
-	height, _, _ := procGetSystemMetrics.Call(uintptr(smCYVirtualScreen))
-	w, h := int(width), int(height)
-	if w == 0 || h == 0 {
+	mons, err := enumMonitors()
+	if err != nil {
+		return nil, err
+	}
+
+	union := mons[0].rect
+	for _, m := range mons[1:] {
+		union = union.Union(m.rect)
+	}
+	if union.Dx() == 0 || union.Dy() == 0 {
 		return nil, errors.New("could not determine screen size")
 	}
-	ox, oy := int32(originX), int32(originY)
 
-	desktop, _, _ := procGetDesktopWindow.Call()
-	srcDC, _, _ := procGetDC.Call(desktop)
-	defer procReleaseDC.Call(desktop, srcDC)
+	img := image.NewRGBA(image.Rect(0, 0, union.Dx(), union.Dy()))
 
-	memDC, _, _ := procCreateCompatibleDC.Call(srcDC)
+	for _, m := range mons {
+		if err := captureMonitorInto(img, m, union.Min); err != nil {
+			return nil, err
+		}
+	}
+	return img, nil
+}
+
+// captureMonitorInto captures m's own device context and draws it into dst
+// at m's position relative to origin.
+func captureMonitorInto(dst *image.RGBA, m winMonitor, origin image.Point) error {
+	devicePtr, err := syscall.UTF16PtrFromString(m.device)
+	if err != nil {
+		return err
+	}
+
+	monDC, _, _ := procCreateDCW.Call(0, uintptr(unsafe.Pointer(devicePtr)), 0, 0)
+	if monDC == 0 {
+		return errors.New("CreateDC failed for monitor " + m.device)
+	}
+	defer procDeleteDC.Call(monDC)
+
+	w, h := m.rect.Dx(), m.rect.Dy()
+	if w == 0 || h == 0 {
+		return nil
+	}
+
+	memDC, _, _ := procCreateCompatibleDC.Call(monDC)
 	defer procDeleteDC.Call(memDC)
 
-	bitmap, _, _ := procCreateCompatibleBitmap.Call(srcDC, uintptr(w), uintptr(h))
+	bitmap, _, _ := procCreateCompatibleBitmap.Call(monDC, uintptr(w), uintptr(h))
 	defer procDeleteObject.Call(bitmap)
 
 	oldObj, _, _ := procSelectObject.Call(memDC, bitmap)
 	defer procSelectObject.Call(memDC, oldObj)
 
-	ok, _, _ := procBitBlt.Call(memDC, 0, 0, uintptr(w), uintptr(h), srcDC, uintptr(ox), uintptr(oy), uintptr(srcCopy))
+	ok, _, _ := procBitBlt.Call(memDC, 0, 0, uintptr(w), uintptr(h), monDC, 0, 0, uintptr(srcCopy))
 	if ok == 0 {
-		return nil, errors.New("BitBlt failed")
+		return errors.New("BitBlt failed for monitor " + m.device)
 	}
 
 	var bi bitmapInfo
@@ -104,10 +133,10 @@ func captureScreen() (image.Image, error) {
 		uintptr(dibRGBColors),
 	)
 	if ret == 0 {
-		return nil, errors.New("GetDIBits failed")
+		return errors.New("GetDIBits failed for monitor " + m.device)
 	}
 
-	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	dx, dy := m.rect.Min.X-origin.X, m.rect.Min.Y-origin.Y
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
 			i := (y*w + x) * 4
@@ -115,8 +144,8 @@ func captureScreen() (image.Image, error) {
 			if a == 0 {
 				a = 255
 			}
-			img.SetRGBA(x, y, color.RGBA{r, g, b, a})
+			dst.SetRGBA(dx+x, dy+y, color.RGBA{r, g, b, a})
 		}
 	}
-	return img, nil
+	return nil
 }
