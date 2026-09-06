@@ -16,6 +16,7 @@ var (
 	procGetModuleHandleW    = kernel32.NewProc("GetModuleHandleW")
 	procEnumDisplayMonitors = user32.NewProc("EnumDisplayMonitors")
 	procGetMonitorInfoW     = user32.NewProc("GetMonitorInfoW")
+	procLoadCursorW         = user32.NewProc("LoadCursorW")
 	procRegisterClassExW    = user32.NewProc("RegisterClassExW")
 	procCreateWindowExW     = user32.NewProc("CreateWindowExW")
 	procUnregisterClassW    = user32.NewProc("UnregisterClassW")
@@ -64,6 +65,8 @@ const (
 	vkEscape     = 0x1B
 
 	overlayTimerID = 1
+
+	idcArrow = 32512 // IDC_ARROW, as a MAKEINTRESOURCE ordinal
 )
 
 type overlayDIB struct {
@@ -154,7 +157,7 @@ func enumMonitors() ([]winMonitor, error) {
 	return mons, nil
 }
 
-// showFreezeOverlay paints img (tinted 25% white) across a borderless,
+// showFreezeOverlay paints img (tinted 50% white) across a borderless,
 // always-on-top window per monitor so the desktop appears frozen, grabbing
 // all keyboard and mouse input so nothing behind it is reachable. It blocks
 // until overlayDuration elapses or the user presses Escape.
@@ -181,9 +184,15 @@ func showFreezeOverlay(img image.Image) {
 	hInstance, _, _ := procGetModuleHandleW.Call(0)
 	className, _ := syscall.UTF16PtrFromString("SnippOverlayWindow")
 
+	// Without an explicit cursor, the window class defaults to none, which
+	// Windows renders as the busy/wait spinner over the overlay instead of
+	// a normal pointer.
+	arrowCursor, _, _ := procLoadCursorW.Call(0, idcArrow)
+
 	wc := wndClassExOv{
 		lpfnWndProc:   syscall.NewCallback(overlayWndProc),
 		hInstance:     syscall.Handle(hInstance),
+		hCursor:       syscall.Handle(arrowCursor),
 		lpszClassName: className,
 	}
 	wc.cbSize = uint32(unsafe.Sizeof(wc))

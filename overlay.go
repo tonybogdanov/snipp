@@ -10,7 +10,7 @@ import (
 // automatically dismissing and saving.
 const overlayDuration = 5 * time.Second
 
-// tintWhite crops img to r and blends a 25%-opacity white layer over it,
+// tintWhite crops img to r and blends a 50%-opacity white layer over it,
 // returning a new image anchored at (0,0) ready to hand to a platform's
 // window-painting code. Compositing is done in software once, up front,
 // rather than as two real stacked translucent windows, since genuine
@@ -20,7 +20,7 @@ const overlayDuration = 5 * time.Second
 // identical and works everywhere.
 func tintWhite(img image.Image, r image.Rectangle) *image.RGBA {
 	out := image.NewRGBA(image.Rect(0, 0, r.Dx(), r.Dy()))
-	const alpha = 0.25
+	const alpha = 0.5
 	for y := 0; y < r.Dy(); y++ {
 		for x := 0; x < r.Dx(); x++ {
 			sr, sg, sb, _ := img.At(r.Min.X+x, r.Min.Y+y).RGBA()

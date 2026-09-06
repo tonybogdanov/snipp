@@ -18,7 +18,7 @@ import (
 // resolve a keysym.
 const x11EscapeKeycode = 9
 
-// showFreezeOverlayX11 paints img (tinted 25% white per monitor) across an
+// showFreezeOverlayX11 paints img (tinted 50% white per monitor) across an
 // override-redirect window per monitor so the desktop appears frozen,
 // grabbing the keyboard and pointer so nothing behind it is reachable. It
 // blocks until overlayDuration elapses or the user presses Escape. See
