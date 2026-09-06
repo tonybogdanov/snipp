@@ -40,12 +40,6 @@ try {
     }
     $nextStr = "$($next.Major).$($next.Minor).$($next.Build)"
 
-    $confirm = Read-Host "Tag and push $nextStr? (y/N)"
-    if ($confirm -ne "y") {
-        Write-Host "Aborted."
-        return
-    }
-
     git tag -a $nextStr -m "Release $nextStr"
     git push origin $nextStr
     Write-Host "Pushed tag $nextStr"
