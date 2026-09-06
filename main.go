@@ -1,9 +1,6 @@
 package main
 
 import (
-	"bytes"
-	"time"
-
 	"fyne.io/systray"
 )
 
@@ -23,8 +20,6 @@ func onReady() {
 
 	systray.SetOnTapped(takeScreenshot)
 
-	go watchTrayTheme()
-
 	go func() {
 		for {
 			select {
@@ -36,23 +31,6 @@ func onReady() {
 			}
 		}
 	}()
-}
-
-// watchTrayTheme keeps the tray icon matching the OS light/dark theme while
-// Snipp keeps running — trayIcon() is otherwise only ever read once, at
-// startup, so a theme switch (or autostart racing ahead of the desktop
-// finishing loading its theme) would leave the wrong-contrast icon stuck
-// until the app was restarted. Neither Windows nor Linux's theme lookup is
-// cheap enough to call every tick, so this just polls at a human timescale.
-func watchTrayTheme() {
-	current := trayIcon()
-	for range time.Tick(5 * time.Second) {
-		next := trayIcon()
-		if !bytes.Equal(current, next) {
-			current = next
-			systray.SetIcon(current)
-		}
-	}
 }
 
 func onExit() {

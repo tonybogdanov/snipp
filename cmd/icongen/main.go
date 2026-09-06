@@ -17,42 +17,49 @@ import (
 // scaling, and Explorer/shell (large) presentations.
 var icoSizes = []int{16, 24, 32, 48, 64, 128, 256}
 
-var variants = []struct {
-	suffix string
-	fg     color.RGBA
-}{
-	{"", color.RGBA{0, 0, 0, 255}},          // assets/icon.{png,ico}: black, for light trays
-	{"-white", color.RGBA{255, 255, 255, 255}}, // assets/icon-white.{png,ico}: white, for dark trays
-}
+// fg is Snipp's brand color, used everywhere the icon appears — a single
+// fixed color instead of theme-matched black/white variants, since chasing
+// every desktop's light/dark signal (and keeping it in sync live) was more
+// trouble than it was worth for a mark that reads fine on either background.
+var fg = color.RGBA{0x00, 0xca, 0xe9, 0xff}
 
 func main() {
-	for _, v := range variants {
-		// 32x32 PNG stays the tray icon asset (trays render small
-		// regardless of DPI, no need for a multi-res image there).
-		trayPNG := new(bytes.Buffer)
-		if err := png.Encode(trayPNG, render(32, v.fg)); err != nil {
-			log.Fatal(err)
-		}
-		if err := os.WriteFile("assets/icon"+v.suffix+".png", trayPNG.Bytes(), 0644); err != nil {
-			log.Fatal(err)
-		}
+	// 256x256 PNG for contexts that render the icon large — the linux
+	// installer's dialogs/dock entry — so it isn't a blurry stretch of the
+	// 32x32 tray bitmap.
+	largePNG := new(bytes.Buffer)
+	if err := png.Encode(largePNG, render(256, fg)); err != nil {
+		log.Fatal(err)
+	}
+	if err := os.WriteFile("assets/icon-large.png", largePNG.Bytes(), 0644); err != nil {
+		log.Fatal(err)
+	}
 
-		var images []icoImage
-		for _, size := range icoSizes {
-			buf := new(bytes.Buffer)
-			if err := png.Encode(buf, render(size, v.fg)); err != nil {
-				log.Fatal(err)
-			}
-			images = append(images, icoImage{width: size, height: size, png: buf.Bytes()})
-		}
+	// 32x32 PNG stays the tray icon asset (trays render small regardless
+	// of DPI, no need for a multi-res image there).
+	trayPNG := new(bytes.Buffer)
+	if err := png.Encode(trayPNG, render(32, fg)); err != nil {
+		log.Fatal(err)
+	}
+	if err := os.WriteFile("assets/icon.png", trayPNG.Bytes(), 0644); err != nil {
+		log.Fatal(err)
+	}
 
-		icoBuf, err := encodeICO(images)
-		if err != nil {
+	var images []icoImage
+	for _, size := range icoSizes {
+		buf := new(bytes.Buffer)
+		if err := png.Encode(buf, render(size, fg)); err != nil {
 			log.Fatal(err)
 		}
-		if err := os.WriteFile("assets/icon"+v.suffix+".ico", icoBuf, 0644); err != nil {
-			log.Fatal(err)
-		}
+		images = append(images, icoImage{width: size, height: size, png: buf.Bytes()})
+	}
+
+	icoBuf, err := encodeICO(images)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err := os.WriteFile("assets/icon.ico", icoBuf, 0644); err != nil {
+		log.Fatal(err)
 	}
 }
 
