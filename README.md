@@ -12,16 +12,31 @@ spec).
 
 ## Install
 
-Grab the latest build for your platform from the
-[Actions](https://github.com/tonybogdanov/snipp/actions) tab (each run
-uploads `snipp-windows` and `snipp-linux` artifacts), or build it yourself:
+The easiest way is the installer — download it, run it, done: it installs
+Snipp (or updates an existing install to the new version), registers it to
+autostart at login, and starts it immediately. No prompts, no flags.
+
+- Windows: https://github.com/tonybogdanov/snipp/releases/latest/download/snipp-installer.exe
+  (installs to `%LOCALAPPDATA%\Snipp`, autostarts via the
+  `HKCU\...\CurrentVersion\Run` registry key)
+- Linux: https://github.com/tonybogdanov/snipp/releases/latest/download/snipp-installer
+  (installs to `~/.local/bin`, autostarts via an XDG `~/.config/autostart`
+  entry)
+
+If you'd rather manage the binary yourself, plain (non-installing) builds
+are also published:
+
+- Windows: https://github.com/tonybogdanov/snipp/releases/latest/download/snipp.exe
+- Linux: https://github.com/tonybogdanov/snipp/releases/latest/download/snipp
+
+Or build from source:
 
 ```sh
 git clone git@github.com:tonybogdanov/snipp.git
 cd snipp
 go build -o snipp .        # Linux
 # or, on Windows:
-./bin/build-windows.ps1    # -> artifacts/snipp.exe
+./bin/build-windows.ps1    # -> artifacts/snipp.exe, artifacts/snipp-installer.exe
 ```
 
 Run the resulting binary — it has no window, just a tray icon. Right-click
@@ -30,15 +45,11 @@ Run the resulting binary — it has no window, just a tray icon. Right-click
 
 ## Releases
 
-Download the latest build directly:
-
-- Windows: https://github.com/tonybogdanov/snipp/releases/latest/download/snipp.exe
-- Linux: https://github.com/tonybogdanov/snipp/releases/latest/download/snipp
-
 Each push of an `X.Y.Z` tag builds both platforms and publishes a GitHub
-release with those files attached, and marks it as the `latest` release.
-To cut one, run `bin/release.ps1` — it asks whether it's a major, minor,
-or bugfix release, bumps the version accordingly, and tags/pushes it.
+release with the plain binaries and installers attached, marked as the
+`latest` release. To cut one, run `bin/release.ps1` — it asks whether it's
+a major, minor, or bugfix release, bumps the version accordingly, and
+tags/pushes it.
 
 ## Requirements
 

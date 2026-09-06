@@ -28,7 +28,9 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: snipp-windows
-          path: artifacts/snipp.exe
+          path: |
+            artifacts/snipp.exe
+            artifacts/snipp-installer.exe
 
   build-linux:
     runs-on: ubuntu-latest
@@ -46,7 +48,9 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: snipp-linux
-          path: artifacts/snipp
+          path: |
+            artifacts/snipp
+            artifacts/snipp-installer
 
   release:
     needs: [build-windows, build-linux]
@@ -72,7 +76,9 @@ jobs:
           make_latest: true
           files: |
             artifacts/snipp.exe
+            artifacts/snipp-installer.exe
             artifacts/snipp
+            artifacts/snipp-installer
 
   cleanup:
     runs-on: ubuntu-latest
