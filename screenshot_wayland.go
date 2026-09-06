@@ -1,0 +1,80 @@
+//go:build linux
+
+package main
+
+import (
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/godbus/dbus/v5"
+)
+
+const (
+	portalDest      = "org.freedesktop.portal.Desktop"
+	portalPath      = "/org/freedesktop/portal/desktop"
+	portalScreenIfc = "org.freedesktop.portal.Screenshot"
+	portalReqIfc    = "org.freedesktop.portal.Request"
+)
+
+// doScreenshotWayland asks the compositor's xdg-desktop-portal to take a
+// screenshot. This is the only capture path that works uniformly across
+// GNOME/Mutter, KDE/KWin and wlroots compositors (Sway, Hyprland, ...),
+// since Wayland itself gives clients no access to the framebuffer.
+func doScreenshotWayland() (string, error) {
+	conn, err := dbus.ConnectSessionBus()
+	if err != nil {
+		return "", err
+	}
+	defer conn.Close()
+
+	if err := conn.AddMatchSignal(
+		dbus.WithMatchInterface(portalReqIfc),
+		dbus.WithMatchMember("Response"),
+	); err != nil {
+		return "", err
+	}
+
+	signals := make(chan *dbus.Signal, 1)
+	conn.Signal(signals)
+
+	obj := conn.Object(portalDest, dbus.ObjectPath(portalPath))
+	options := map[string]dbus.Variant{
+		"handle_token": dbus.MakeVariant(fmt.Sprintf("snipp%d", time.Now().UnixNano())),
+	}
+
+	var requestPath dbus.ObjectPath
+	if err := obj.Call(portalScreenIfc+".Screenshot", 0, "", options).Store(&requestPath); err != nil {
+		return "", fmt.Errorf("portal screenshot request failed: %w", err)
+	}
+
+	for sig := range signals {
+		if sig.Path != requestPath || sig.Name != portalReqIfc+".Response" {
+			continue
+		}
+		if len(sig.Body) < 2 {
+			return "", errors.New("malformed portal response")
+		}
+		code, ok := sig.Body[0].(uint32)
+		if !ok || code != 0 {
+			return "", fmt.Errorf("screenshot portal declined or failed (code %v)", sig.Body[0])
+		}
+		results, ok := sig.Body[1].(map[string]dbus.Variant)
+		if !ok {
+			return "", errors.New("malformed portal response results")
+		}
+		uriVal, ok := results["uri"]
+		if !ok {
+			return "", errors.New("portal response missing screenshot uri")
+		}
+		uri, ok := uriVal.Value().(string)
+		if !ok {
+			return "", errors.New("portal response uri is not a string")
+		}
+
+		path := strings.TrimPrefix(uri, "file://")
+		return saveScreenshotFile(path)
+	}
+	return "", errors.New("portal response channel closed unexpectedly")
+}

@@ -37,5 +37,10 @@ func onExit() {
 }
 
 func takeScreenshot() {
-	alert("Snipp", "It works!")
+	path, err := doScreenshot()
+	if err != nil {
+		alert("Snipp", "Screenshot failed: "+err.Error())
+		return
+	}
+	alert("Snipp", "Saved to "+path)
 }

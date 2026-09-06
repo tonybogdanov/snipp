@@ -21,12 +21,13 @@ jobs:
           go-version-file: go.mod
 
       - name: Build
-        run: go build -ldflags "-H=windowsgui" -o snipp.exe .
+        shell: pwsh
+        run: ./bin/build-windows.ps1
 
       - uses: actions/upload-artifact@v7
         with:
           name: snipp-windows
-          path: snipp.exe
+          path: artifacts/snipp.exe
 
   build-linux:
     runs-on: ubuntu-latest
@@ -38,12 +39,13 @@ jobs:
           go-version-file: go.mod
 
       - name: Build
-        run: go build -o snipp-linux .
+        shell: pwsh
+        run: ./bin/build-linux.ps1
 
       - uses: actions/upload-artifact@v7
         with:
           name: snipp-linux
-          path: snipp-linux
+          path: artifacts/snipp
 
   cleanup:
     needs: [build-windows, build-linux]

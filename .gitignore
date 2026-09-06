@@ -1,6 +1,4 @@
-/snipp
-/snipp.exe
-/snipp-linux
+/artifacts/
 *.exe
 *.test
 *.out

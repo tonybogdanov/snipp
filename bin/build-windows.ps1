@@ -6,8 +6,9 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Push-Location $root
 try {
-    go build -ldflags "-H=windowsgui" -o snipp.exe .
-    Write-Host "Built $root\snipp.exe"
+    New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+    go build -ldflags "-H=windowsgui" -o artifacts/snipp.exe .
+    Write-Host "Built $root\artifacts\snipp.exe"
 } finally {
     Pop-Location
 }
