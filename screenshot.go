@@ -4,11 +4,26 @@ import (
 	"fmt"
 	"image"
 	"image/png"
-	"io"
 	"os"
 	"path/filepath"
 	"time"
 )
+
+// doScreenshot captures the screen as fast as possible, then freezes it
+// behind a tinted overlay for a few seconds (so the user has visible
+// confirmation a screenshot was taken and time to see the result) before
+// saving. The overlay is purely presentational: what gets saved is the
+// original capture, not whatever the overlay painted.
+func doScreenshot() (string, error) {
+	img, err := captureScreen()
+	if err != nil {
+		return "", err
+	}
+
+	showFreezeOverlay(img)
+
+	return saveScreenshot(img)
+}
 
 // newScreenshotPath returns a fresh, unused path under ~/Pictures/Snipp
 // named by the current time, creating that directory if needed.
@@ -43,39 +58,5 @@ func saveScreenshot(img image.Image) (string, error) {
 	if err := png.Encode(f, img); err != nil {
 		return "", err
 	}
-	return path, nil
-}
-
-// saveScreenshotFile copies an already-captured PNG (e.g. one produced by
-// the xdg-desktop-portal, which writes its own file such as
-// ~/Pictures/Screenshot.png and hands back a URI to it) into
-// ~/Pictures/Snipp and returns the new path. srcPath is removed afterwards —
-// it only exists as the portal's transient output for this one request, and
-// leaving it behind would duplicate every screenshot into Pictures itself.
-func saveScreenshotFile(srcPath string) (string, error) {
-	path, err := newScreenshotPath()
-	if err != nil {
-		return "", err
-	}
-
-	src, err := os.Open(srcPath)
-	if err != nil {
-		return "", err
-	}
-	defer src.Close()
-
-	dst, err := os.Create(path)
-	if err != nil {
-		return "", err
-	}
-	defer dst.Close()
-
-	if _, err := io.Copy(dst, src); err != nil {
-		return "", err
-	}
-
-	src.Close()
-	os.Remove(srcPath)
-
 	return path, nil
 }

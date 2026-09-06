@@ -11,14 +11,6 @@ import (
 	"github.com/BurntSushi/xgb/xproto"
 )
 
-func doScreenshotX11() (string, error) {
-	img, err := captureScreenX11()
-	if err != nil {
-		return "", err
-	}
-	return saveScreenshot(img)
-}
-
 // captureScreenX11 grabs the root window's pixels directly from the X
 // server via GetImage. Assumes a 32-bit ZPixmap in BGRX byte order, which
 // holds for the TrueColor/DirectColor 24/32-bit depths virtually every

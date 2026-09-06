@@ -54,14 +54,6 @@ type bitmapInfo struct {
 	Colors [1]uint32
 }
 
-func doScreenshot() (string, error) {
-	img, err := captureScreen()
-	if err != nil {
-		return "", err
-	}
-	return saveScreenshot(img)
-}
-
 // captureScreen grabs the full virtual desktop (every monitor, at each
 // monitor's true physical resolution — see initDPIAwareness) via GDI
 // BitBlt. The virtual screen's origin can be negative (a monitor placed
