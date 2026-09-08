@@ -27,6 +27,7 @@ const x11EscapeKeycode = 9
 func showFreezeOverlayX11(img image.Image) {
 	conn, err := xgb.NewConn()
 	if err != nil {
+		debugf("x11: connect failed: %v", err)
 		return
 	}
 	defer conn.Close()
@@ -36,8 +37,10 @@ func showFreezeOverlayX11(img image.Image) {
 
 	rects, err := monitorsX11(conn, root)
 	if err != nil {
+		debugf("x11: monitor enumeration failed: %v", err)
 		return
 	}
+	debugf("x11: %d monitor(s): %v", len(rects), rects)
 
 	setup := xproto.Setup(conn)
 	maxDataBytes := int(setup.MaximumRequestLength)*4 - 24
@@ -64,6 +67,7 @@ func showFreezeOverlayX11(img image.Image) {
 			xproto.CwOverrideRedirect|xproto.CwEventMask,
 			[]uint32{1, xproto.EventMaskKeyPress},
 		).Check(); err != nil {
+			debugf("x11: create window failed: %v", err)
 			continue
 		}
 
@@ -84,6 +88,7 @@ func showFreezeOverlayX11(img image.Image) {
 			conn, screen.RootDepth, pix, xproto.Drawable(win),
 			uint16(r.Dx()), uint16(r.Dy()),
 		).Check(); err != nil {
+			debugf("x11: create pixmap failed: %v", err)
 			xproto.DestroyWindow(conn, win)
 			continue
 		}
@@ -116,8 +121,10 @@ func showFreezeOverlayX11(img image.Image) {
 	}
 
 	if len(wins) == 0 {
+		debugf("x11: no overlay windows created")
 		return
 	}
+	debugf("x11: %d overlay window(s) mapped", len(wins))
 
 	kbGrab, err := xproto.GrabKeyboard(
 		conn, true, root, xproto.TimeCurrentTime,
@@ -131,6 +138,7 @@ func showFreezeOverlayX11(img image.Image) {
 		root, xproto.CursorNone, xproto.TimeCurrentTime,
 	).Reply()
 	ptrGrabbed := err == nil && ptrGrab != nil && ptrGrab.Status == xproto.GrabStatusSuccess
+	debugf("x11: grabs keyboard=%t pointer=%t", kbGrabbed, ptrGrabbed)
 
 	events := make(chan xgb.Event, 8)
 	done := make(chan struct{})

@@ -42,12 +42,14 @@ type wlOutputInfo struct {
 func showFreezeOverlayWayland(img image.Image) {
 	display, err := client.Connect("")
 	if err != nil {
+		debugf("wayland: connect failed: %v", err)
 		return
 	}
 	defer display.Context().Close()
 
 	registry, err := display.GetRegistry()
 	if err != nil {
+		debugf("wayland: registry failed: %v", err)
 		return
 	}
 
@@ -91,8 +93,14 @@ func showFreezeOverlayWayland(img image.Image) {
 	wlRoundTrip(display)
 
 	if compositor == nil || shm == nil || lockManager == nil || len(outputs) == 0 {
+		// A missing ext_session_lock_manager_v1 is the common one: the
+		// compositor doesn't implement ext-session-lock-v1 (GNOME's mutter
+		// notably doesn't), and there's no client-side substitute.
+		debugf("wayland: missing globals: compositor=%t shm=%t seat=%t lock_manager=%t outputs=%d",
+			compositor != nil, shm != nil, seat != nil, lockManager != nil, len(outputs))
 		return
 	}
+	debugf("wayland: globals ok, %d output(s)", len(outputs))
 
 	var keyboard *client.Keyboard
 	if seat != nil {
@@ -101,6 +109,7 @@ func showFreezeOverlayWayland(img image.Image) {
 
 	lock, err := lockManager.Lock()
 	if err != nil || lock == nil {
+		debugf("wayland: lock request failed: %v", err)
 		return
 	}
 
@@ -156,14 +165,17 @@ func showFreezeOverlayWayland(img image.Image) {
 	for _, o := range outputs {
 		surface, err := compositor.CreateSurface()
 		if err != nil {
+			debugf("wayland: create surface failed: %v", err)
 			continue
 		}
 		o.surface = surface
 
 		lockSurface, err := lock.GetLockSurface(surface, o.output)
 		if err != nil {
+			debugf("wayland: get lock surface failed: %v", err)
 			continue
 		}
+		debugf("wayland: lock surface created for output at %d,%d %dx%d", o.x, o.y, o.w, o.h)
 		o.lockSurface = lockSurface
 
 		info := o
@@ -171,6 +183,7 @@ func showFreezeOverlayWayland(img image.Image) {
 			lockSurface.AckConfigure(ce.Serial)
 
 			w, h := int32(ce.Width), int32(ce.Height)
+			debugf("wayland: configure %dx%d", w, h)
 			if w == 0 || h == 0 {
 				return
 			}
@@ -178,6 +191,7 @@ func showFreezeOverlayWayland(img image.Image) {
 			crop := image.Rect(int(info.x), int(info.y), int(info.x)+int(w), int(info.y)+int(h)).Intersect(imgBounds)
 			buf := buildWaylandBuffer(shm, tintWhite(img, crop), w, h)
 			if buf == nil {
+				debugf("wayland: buffer allocation failed for %dx%d", w, h)
 				return
 			}
 
@@ -197,12 +211,15 @@ func showFreezeOverlayWayland(img image.Image) {
 	locked, aborted := false, false
 	select {
 	case <-lockedCh:
+		debugf("wayland: compositor confirmed the lock")
 		locked = true
 	case <-finishedCh:
 		// The compositor refused or dropped the lock; there's nothing on
 		// screen to keep up.
+		debugf("wayland: compositor finished the lock (refused or dropped)")
 		aborted = true
 	case <-time.After(2 * time.Second):
+		debugf("wayland: lock never confirmed, keeping the surfaces up anyway")
 		// Never confirmed, but the surfaces are painted and visible, so
 		// they stay up for their full duration anyway.
 	}

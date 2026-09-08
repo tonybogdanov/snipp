@@ -22,6 +22,11 @@ func captureScreen() (image.Image, error) {
 // equivalent client-side mechanism and instead uses the compositor-enforced
 // ext-session-lock-v1 protocol.
 func showFreezeOverlay(img image.Image) {
+	debugf("overlay: version=%s XDG_SESSION_TYPE=%q XDG_CURRENT_DESKTOP=%q WAYLAND_DISPLAY=%q DISPLAY=%q capture=%v",
+		version,
+		os.Getenv("XDG_SESSION_TYPE"), os.Getenv("XDG_CURRENT_DESKTOP"),
+		os.Getenv("WAYLAND_DISPLAY"), os.Getenv("DISPLAY"), img.Bounds())
+
 	if isWayland() {
 		showFreezeOverlayWayland(img)
 		return
@@ -29,6 +34,11 @@ func showFreezeOverlay(img image.Image) {
 	showFreezeOverlayX11(img)
 }
 
+// isWayland reports whether this is a Wayland session. XDG_SESSION_TYPE is
+// set by the login manager and is the canonical answer, but it's missing in
+// sessions started outside one (a compositor launched from a TTY, a nested
+// compositor); WAYLAND_DISPLAY is set by the compositor itself, so it
+// catches those.
 func isWayland() bool {
-	return os.Getenv("XDG_SESSION_TYPE") == "wayland"
+	return os.Getenv("XDG_SESSION_TYPE") == "wayland" || os.Getenv("WAYLAND_DISPLAY") != ""
 }

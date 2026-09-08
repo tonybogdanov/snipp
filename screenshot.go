@@ -17,10 +17,13 @@ import (
 func doScreenshot() (string, error) {
 	img, err := captureScreen()
 	if err != nil {
+		debugf("capture failed: %v", err)
 		return "", err
 	}
 
+	start := time.Now()
 	showFreezeOverlay(img)
+	debugf("overlay returned after %s", time.Since(start).Round(time.Millisecond))
 
 	return saveScreenshot(img)
 }
