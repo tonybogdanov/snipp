@@ -10,8 +10,17 @@ import (
 	"github.com/rajveermalviya/go-wayland/wayland/client"
 	xdg_shell "github.com/rajveermalviya/go-wayland/wayland/stable/xdg-shell"
 	ext_session_lock "github.com/rajveermalviya/go-wayland/wayland/staging/ext-session-lock-v1"
+	"golang.org/x/image/draw"
 	"golang.org/x/sys/unix"
 )
+
+// max32 is min/max for int32, which the builtins don't cover.
+func max32(a, b int32) int32 {
+	if a > b {
+		return a
+	}
+	return b
+}
 
 // waylandKeyEscape is the raw evdev keycode for Escape, as delivered
 // directly (no +8 offset, unlike X11) by wl_keyboard.key events.
@@ -296,9 +305,11 @@ func (s *wlSession) fullscreenOverlay(wmBase *xdg_shell.WmBase) {
 		// The toplevel's configure carries the size the compositor wants;
 		// it arrives before the xdg_surface configure that commits the
 		// state, so by the time the paint below runs the size is known.
-		// Until then, fall back to the output's own mode.
+		// Until then, fall back to the output's own mode — which is in
+		// physical pixels, so it has to come back down to logical ones
+		// before paint scales it up again.
 		info := o
-		w, h := o.w, o.h
+		w, h := o.w/max32(o.scale, 1), o.h/max32(o.scale, 1)
 		toplevel.SetConfigureHandler(func(ce xdg_shell.ToplevelConfigureEvent) {
 			debugf("wayland: toplevel configure %dx%d", ce.Width, ce.Height)
 			if ce.Width > 0 && ce.Height > 0 {
@@ -347,18 +358,67 @@ func (s *wlSession) paint(o *wlOutputInfo, w, h int32) {
 	}
 	bufW, bufH := w*scale, h*scale
 
-	crop := image.Rect(
-		int(o.x*scale), int(o.y*scale),
-		int(o.x*scale+bufW), int(o.y*scale+bufH),
-	).Intersect(s.img.Bounds())
+	// The buffer size and the capture's pixel dimensions are arrived at
+	// independently — the first from the compositor's configure times the
+	// output's integer scale, the second from whatever the portal handed
+	// back — and they don't have to agree. Under fractional scaling they
+	// reliably don't: KWin advertises scale 1 on wl_output (the integer
+	// event can't express 1.5) while the capture is at full device
+	// resolution. So take the output's region of the capture on its own
+	// terms and resample it to the buffer, rather than cutting out bufW x
+	// bufH pixels and trusting that to be the right region.
+	tinted := scaleTo(tintWhite(s.img, s.captureRect(o)), bufW, bufH)
 
-	buf := buildWaylandBuffer(s.shm, tintWhite(s.img, crop), bufW, bufH)
+	buf := buildWaylandBuffer(s.shm, tinted, bufW, bufH)
 	if buf == nil {
 		debugf("wayland: buffer allocation failed for %dx%d", bufW, bufH)
 		return
 	}
 
 	s.surfaceCommit(o.surface, buf, scale, bufW, bufH)
+}
+
+// captureRect is the region of the capture that belongs to o, in capture
+// pixels. With one output that's the whole capture, which sidesteps the
+// guesswork entirely — and one output is the common case. With several,
+// wl_output gives the mode in physical pixels but the position only in
+// logical ones, so the position is scaled up and the result clamped; an
+// empty intersection means the guess was wrong, and the whole capture is a
+// better wrong answer than nothing.
+func (s *wlSession) captureRect(o *wlOutputInfo) image.Rectangle {
+	bounds := s.img.Bounds()
+	if len(s.outputs) < 2 || o.w <= 0 || o.h <= 0 {
+		return bounds
+	}
+
+	scale := o.scale
+	if scale < 1 {
+		scale = 1
+	}
+
+	x, y := int(o.x*scale), int(o.y*scale)
+	rect := image.Rect(x, y, x+int(o.w), y+int(o.h)).Intersect(bounds)
+	if rect.Empty() {
+		debugf("wayland: output region %v falls outside the capture %v", rect, bounds)
+		return bounds
+	}
+	return rect
+}
+
+// scaleTo resamples img to exactly w x h, returning it untouched when it's
+// already that size (the case whenever the compositor's idea of the output
+// matches the capture). ApproxBiLinear rather than a better filter because
+// this runs on the dispatch path at up to 4K, and the result is a
+// half-white-tinted backdrop where sharpness doesn't show.
+func scaleTo(img *image.RGBA, w, h int32) *image.RGBA {
+	if img.Bounds().Dx() == int(w) && img.Bounds().Dy() == int(h) {
+		return img
+	}
+
+	debugf("wayland: resampling the capture from %v to %dx%d", img.Bounds(), w, h)
+	out := image.NewRGBA(image.Rect(0, 0, int(w), int(h)))
+	draw.ApproxBiLinear.Scale(out, out.Bounds(), img, img.Bounds(), draw.Src, nil)
+	return out
 }
 
 // surfaceCommit attaches buf and presents it. Attaching alone shows
