@@ -16,7 +16,7 @@ func onReady() {
 
 	screenshot := systray.AddMenuItem("Take Screenshot", "Take a screenshot")
 	systray.AddSeparator()
-	update := systray.AddMenuItem("Update Snipp", "Check for a newer release and install it")
+	update := systray.AddMenuItem("Check for Updates", "Check for a newer release and install it")
 	quit := systray.AddMenuItem("Quit", "Quit Snipp")
 
 	systray.SetOnTapped(takeScreenshot)

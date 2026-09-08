@@ -15,9 +15,9 @@ import (
 // rather than closing it and opening a second confirmation dialog, which
 // looked like two different, inconsistent windows. Once installed, the user
 // dismisses it via the window's own close button. The exception is an
-// outcome too long for that one-line text (the download couldn't happen),
-// which gets its own message dialog. If zenity isn't available the outcome
-// goes out as a notification rather than being swallowed.
+// outcome too long for that one-line text (an install failure and its
+// cause), which gets its own message dialog. If zenity isn't available the
+// outcome goes out as a notification rather than being swallowed.
 //
 // Known limitation: the dock/taskbar icon during install is zenity's own
 // generic icon, not Snipp's. --window-icon only sets the icon painted
@@ -69,8 +69,8 @@ func run() {
 	}
 
 	// The progress dialog's text is a single line fed through its stdin, so
-	// the multi-line messages (why the download couldn't happen, and what
-	// that means for the install) get their own dialog instead.
+	// a multi-line message (an install failure and its cause) gets its own
+	// dialog instead.
 	stdin.Close()
 	if progress.Process != nil {
 		progress.Process.Kill()
@@ -112,13 +112,8 @@ func writeTempIcon() string {
 	return tmp.Name()
 }
 
-// binaryName is what the app is called once installed, and binaryAsset the
-// release asset it's downloaded from — the same name here, but they're
-// distinct roles.
-const (
-	binaryName  = "snipp"
-	binaryAsset = "snipp"
-)
+// binaryName is what the app is called once installed.
+const binaryName = "snipp"
 
 // installDir is the per-user install location; no root needed.
 func installDir() (string, error) {
@@ -129,7 +124,7 @@ func installDir() (string, error) {
 	return filepath.Join(home, ".local", "bin"), nil
 }
 
-// placeBinary writes the downloaded binary over the installed one. Writing
+// placeBinary writes the embedded binary over the installed one. Writing
 // to a temp file and renaming over the target is safe even if the old
 // binary is still running from it (Linux keeps the old inode open).
 func placeBinary(target string, binary []byte) error {

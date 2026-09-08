@@ -21,8 +21,11 @@ version="$(git rev-parse HEAD | cut -c1-7)"
 go build -ldflags "-X main.version=$version" -o artifacts/snipp .
 echo "Built $root/artifacts/snipp"
 
-# The installer carries no payload — it downloads the snipp binary from the
-# latest release at run time — so it doesn't depend on the binary built
-# above and needs no version stamp of its own.
+# The installer embeds the binary built above as its payload; keeping it
+# current is the app's own job, via the tray's "Check for Updates".
+payload="cmd/installer/payload/linux.bin"
+cp artifacts/snipp "$payload"
+trap 'git checkout -- "$payload"' EXIT
+
 go build -o artifacts/snipp-installer ./cmd/installer
 echo "Built $root/artifacts/snipp-installer"

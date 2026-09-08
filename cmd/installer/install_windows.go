@@ -39,8 +39,8 @@ func run() {
 
 	screenW, _, _ := procGetSystemMetrics.Call(smCXScreen)
 	screenH, _, _ := procGetSystemMetrics.Call(smCYScreen)
-	// Tall enough for the multi-line messages install() can return (an
-	// offline explanation is three short lines).
+	// Tall enough for the multi-line messages install() can return (a
+	// failure names its cause on a second line).
 	const winW, winH = 420, 240
 	x := (int32(screenW) - winW) / 2
 	y := (int32(screenH) - winH) / 2
@@ -228,9 +228,9 @@ var (
 	hwndMain, hwndLabel, hwndProgress, hwndButton uintptr
 	installDone                                   bool
 
-	// installMessage is what install() concluded — success, "already up to
-	// date", or why it couldn't. Written by the install goroutine and read
-	// by the window procedure only after wmInstallDone hands over.
+	// installMessage is what install() concluded — success, or why it
+	// failed. Written by the install goroutine and read by the window
+	// procedure only after wmInstallDone hands over.
 	installMessage string
 )
 
@@ -265,13 +265,8 @@ type initCommonControlsEx struct {
 	dwICC  uint32
 }
 
-// binaryName is what the app is called once installed, and binaryAsset the
-// release asset it's downloaded from — the same name here, but they're
-// distinct roles.
-const (
-	binaryName  = "snipp.exe"
-	binaryAsset = "snipp.exe"
-)
+// binaryName is what the app is called once installed.
+const binaryName = "snipp.exe"
 
 // installDir is the per-user install location; no elevation needed.
 func installDir() (string, error) {
@@ -282,7 +277,7 @@ func installDir() (string, error) {
 	return filepath.Join(local, "Snipp"), nil
 }
 
-// placeBinary writes the downloaded exe over the installed one. Renaming
+// placeBinary writes the embedded exe over the installed one. Renaming
 // the old exe out of the way first works because Windows opens running
 // executables with share-delete, not share-write: the rename succeeds even
 // while the old process is still executing from it.

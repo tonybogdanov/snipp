@@ -20,11 +20,16 @@ try {
     go build -ldflags "-H=windowsgui -X main.version=$version" -o artifacts/snipp.exe .
     Write-Host "Built $root\artifacts\snipp.exe"
 
-    # The installer carries no payload — it downloads snipp.exe from the
-    # latest release at run time — so it doesn't depend on the exe built
-    # above and needs no version stamp of its own.
-    go build -ldflags "-H=windowsgui" -o artifacts/snipp-installer.exe ./cmd/installer
-    Write-Host "Built $root\artifacts\snipp-installer.exe"
+    # The installer embeds the exe built above as its payload; keeping it
+    # current is the app's own job, via the tray's "Check for Updates".
+    $payload = "cmd/installer/payload/windows.bin"
+    Copy-Item artifacts/snipp.exe $payload -Force
+    try {
+        go build -ldflags "-H=windowsgui" -o artifacts/snipp-installer.exe ./cmd/installer
+        Write-Host "Built $root\artifacts\snipp-installer.exe"
+    } finally {
+        git checkout -- $payload
+    }
 } finally {
     Pop-Location
 }

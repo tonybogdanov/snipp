@@ -31,23 +31,22 @@ it right away — no prompts.
 
 ## Updating
 
-Use the tray menu's **Update Snipp** entry: it compares the commit hash the
-running build was made from against the latest release's, and if they
+Use the tray menu's **Check for Updates** entry: it compares the commit hash
+the running build was made from against the latest release's, and if they
 differ it downloads that release's installer and hands over to it — the
 installer replaces the binary and restarts Snipp. If you're already on the
 latest build, or GitHub can't be reached, it says so and changes nothing.
 
-Re-running the installer does the same thing.
+Updating is the app's job, not the installer's: an installer only ever
+installs the build it carries, so it needs no network and does the same
+thing every time it runs.
 
 ## Releases
 
 Every push to `master` builds both platforms and publishes a GitHub release
-named after the short commit hash and marked as the `latest` release, with
-the installers *and* the app binaries attached. The installer embeds no
-payload: it downloads `snipp`/`snipp.exe` from the latest release when it
-runs, so an installer saved months ago still installs the current build.
-The same short hash is stamped into the app at build time as its version,
-which is what the updater compares.
+with the installers attached, named after the short commit hash and marked
+as the `latest` release. That same short hash is stamped into the app at
+build time as its version, which is what the updater compares.
 
 ## Requirements
 
