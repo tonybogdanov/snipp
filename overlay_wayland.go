@@ -148,14 +148,11 @@ func showFreezeOverlayWayland(img image.Image) {
 
 	imgBounds := img.Bounds()
 
-	select {
-	case <-lockedCh:
-	case <-finishedCh:
-		return
-	case <-time.After(2 * time.Second):
-		return
-	}
-
+	// The lock surfaces have to be created and painted first: the
+	// compositor sends `locked` only once every output is covered by a lock
+	// surface with a committed buffer. Waiting for `locked` before creating
+	// them deadlocks — the compositor is waiting on the client and the
+	// client on the compositor — which is why no overlay appeared at all.
 	for _, o := range outputs {
 		surface, err := compositor.CreateSurface()
 		if err != nil {
@@ -185,14 +182,38 @@ func showFreezeOverlayWayland(img image.Image) {
 			}
 
 			surface.Attach(buf, 0, 0)
+			// Attaching a buffer isn't enough on its own — a commit only
+			// presents the parts of it the client marked damaged.
+			surface.DamageBuffer(0, 0, w, h)
 			surface.Commit()
 		})
 	}
 
+	// Now the lock can be waited on. `finished` means the compositor
+	// refused or dropped it, so there's nothing on screen to keep up;
+	// anything else — including a compositor that never gets around to
+	// confirming — leaves the surfaces up for their full duration, since
+	// they're painted and visible either way.
+	locked, aborted := false, false
 	select {
-	case <-escapeCh:
+	case <-lockedCh:
+		locked = true
 	case <-finishedCh:
-	case <-time.After(overlayDuration):
+		// The compositor refused or dropped the lock; there's nothing on
+		// screen to keep up.
+		aborted = true
+	case <-time.After(2 * time.Second):
+		// Never confirmed, but the surfaces are painted and visible, so
+		// they stay up for their full duration anyway.
+	}
+
+	if !aborted {
+		select {
+		case <-escapeCh:
+		case <-finishedCh:
+			locked = false
+		case <-time.After(overlayDuration):
+		}
 	}
 
 	for _, o := range outputs {
@@ -203,7 +224,14 @@ func showFreezeOverlayWayland(img image.Image) {
 			o.surface.Destroy()
 		}
 	}
-	lock.UnlockAndDestroy()
+
+	// UnlockAndDestroy is only valid on a lock the compositor confirmed;
+	// destroying an unlocked one is the protocol's other exit.
+	if locked {
+		lock.UnlockAndDestroy()
+	} else {
+		lock.Destroy()
+	}
 }
 
 // buildWaylandBuffer uploads tinted into a fresh wl_shm-backed buffer sized
@@ -237,7 +265,10 @@ func buildWaylandBuffer(shm *client.Shm, tinted *image.RGBA, w, h int32) *client
 	for y := 0; y < int(h); y++ {
 		for x := 0; x < int(w); x++ {
 			i := int(stride)*y + x*4
-			var c = struct{ r, g, b, a byte }{0, 0, 0, 255}
+			// The capture doesn't necessarily cover the whole output; any
+			// strip it doesn't reach reads as part of the white tint rather
+			// than as a black band.
+			var c = struct{ r, g, b, a byte }{255, 255, 255, 255}
 			if x < tw && y < th {
 				p := tinted.RGBAAt(x, y)
 				c.r, c.g, c.b, c.a = p.R, p.G, p.B, p.A

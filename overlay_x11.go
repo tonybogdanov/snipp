@@ -45,7 +45,13 @@ func showFreezeOverlayX11(img image.Image) {
 
 	var wins []xproto.Window
 	var gcs []xproto.Gcontext
+	var pixmaps []xproto.Pixmap
 	for _, r := range rects {
+		crop := r.Intersect(imgBounds)
+		if crop.Empty() {
+			continue
+		}
+
 		wid, err := conn.NewId()
 		if err != nil {
 			continue
@@ -61,23 +67,52 @@ func showFreezeOverlayX11(img image.Image) {
 			continue
 		}
 
-		gcid, err := conn.NewId()
+		// The tinted image goes into a pixmap, which is then made the
+		// window's background. Drawing straight into the window instead
+		// only works while it's viewable — X discards drawing to a window
+		// that isn't, and MapWindow is asynchronous, so painting right
+		// after it raced the map and usually lost. A background pixmap has
+		// no such window: the server paints it when the window is mapped
+		// and repaints it on every expose, with no event handling here.
+		pixid, err := conn.NewId()
 		if err != nil {
 			xproto.DestroyWindow(conn, win)
 			continue
 		}
-		gc := xproto.Gcontext(gcid)
-		xproto.CreateGC(conn, gc, xproto.Drawable(win), 0, nil)
-
-		xproto.MapWindow(conn, win)
-
-		crop := r.Intersect(imgBounds)
-		if !crop.Empty() {
-			paintTintedX11(conn, win, gc, screen.RootDepth, tintWhite(img, crop), maxDataBytes)
+		pix := xproto.Pixmap(pixid)
+		if err := xproto.CreatePixmapChecked(
+			conn, screen.RootDepth, pix, xproto.Drawable(win),
+			uint16(r.Dx()), uint16(r.Dy()),
+		).Check(); err != nil {
+			xproto.DestroyWindow(conn, win)
+			continue
 		}
+
+		gcid, err := conn.NewId()
+		if err != nil {
+			xproto.FreePixmap(conn, pix)
+			xproto.DestroyWindow(conn, win)
+			continue
+		}
+		gc := xproto.Gcontext(gcid)
+		xproto.CreateGC(conn, gc, xproto.Drawable(pix), xproto.GcForeground, []uint32{screen.WhitePixel})
+
+		// A fresh pixmap's contents are undefined, and the capture doesn't
+		// necessarily cover the whole monitor — fill first so any strip the
+		// image doesn't reach reads as part of the white tint rather than
+		// as garbage.
+		xproto.PolyFillRectangle(conn, xproto.Drawable(pix), gc, []xproto.Rectangle{
+			{X: 0, Y: 0, Width: uint16(r.Dx()), Height: uint16(r.Dy())},
+		})
+
+		paintTintedX11(conn, xproto.Drawable(pix), gc, screen.RootDepth, tintWhite(img, crop), maxDataBytes)
+
+		xproto.ChangeWindowAttributes(conn, win, xproto.CwBackPixmap, []uint32{uint32(pix)})
+		xproto.MapWindow(conn, win)
 
 		wins = append(wins, win)
 		gcs = append(gcs, gc)
+		pixmaps = append(pixmaps, pix)
 	}
 
 	if len(wins) == 0 {
@@ -140,15 +175,16 @@ loop:
 	for i, win := range wins {
 		xproto.FreeGC(conn, gcs[i])
 		xproto.DestroyWindow(conn, win)
+		xproto.FreePixmap(conn, pixmaps[i])
 	}
 }
 
-// paintTintedX11 uploads a tinted crop into win via PutImage, chunked by
+// paintTintedX11 uploads a tinted crop into dst via PutImage, chunked by
 // scanline so a single request never exceeds the server's advertised
 // MaximumRequestLength (PutImage isn't guaranteed to support arbitrarily
 // large payloads without BigRequests/MIT-SHM, neither of which is wired up
-// here).
-func paintTintedX11(conn *xgb.Conn, win xproto.Window, gc xproto.Gcontext, depth byte, tinted *image.RGBA, maxDataBytes int) {
+// here). dst is a pixmap rather than the window itself — see the call site.
+func paintTintedX11(conn *xgb.Conn, dst xproto.Drawable, gc xproto.Gcontext, depth byte, tinted *image.RGBA, maxDataBytes int) {
 	w, h := tinted.Bounds().Dx(), tinted.Bounds().Dy()
 	if w == 0 || h == 0 {
 		return
@@ -179,7 +215,7 @@ func paintTintedX11(conn *xgb.Conn, win xproto.Window, gc xproto.Gcontext, depth
 		}
 		chunk := data[y0*rowBytes : (y0+rows)*rowBytes]
 		xproto.PutImage(
-			conn, xproto.ImageFormatZPixmap, xproto.Drawable(win), gc,
+			conn, xproto.ImageFormatZPixmap, dst, gc,
 			uint16(w), uint16(rows), 0, int16(y0), 0, depth, chunk,
 		)
 	}
