@@ -19,8 +19,9 @@ func captureScreen() (image.Image, error) {
 // showFreezeOverlay picks the overlay implementation the same way
 // captureScreen picks the capture path: X11 gets its own override-redirect
 // windows with an explicit keyboard/pointer grab, while Wayland has no
-// equivalent client-side mechanism and instead uses the compositor-enforced
-// ext-session-lock-v1 protocol.
+// equivalent client-side mechanism and uses whichever of the
+// compositor-enforced ext-session-lock-v1 or a fullscreen xdg-shell
+// toplevel the compositor offers — see showFreezeOverlayWayland.
 func showFreezeOverlay(img image.Image) {
 	debugf("overlay: version=%s XDG_SESSION_TYPE=%q XDG_CURRENT_DESKTOP=%q WAYLAND_DISPLAY=%q DISPLAY=%q capture=%v",
 		version,

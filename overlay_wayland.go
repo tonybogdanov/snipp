@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/rajveermalviya/go-wayland/wayland/client"
+	xdg_shell "github.com/rajveermalviya/go-wayland/wayland/stable/xdg-shell"
 	ext_session_lock "github.com/rajveermalviya/go-wayland/wayland/staging/ext-session-lock-v1"
 	"golang.org/x/sys/unix"
 )
@@ -17,28 +18,43 @@ import (
 const waylandKeyEscape = 1
 
 type wlOutputInfo struct {
-	output      *client.Output
-	x, y        int32
-	w, h        int32
+	output *client.Output
+	x, y   int32
+	w, h   int32
+	scale  int32
+
 	surface     *client.Surface
 	lockSurface *ext_session_lock.ExtSessionLockSurface
+	xdgSurface  *xdg_shell.Surface
+	toplevel    *xdg_shell.Toplevel
 }
 
-// showFreezeOverlayWayland locks the session via ext-session-lock-v1 —
-// the same protocol real screen lockers (swaylock, hyprlock) use — and
-// paints a tinted lock surface per output. This gives the strongest "true
-// lock" guarantee of any platform here: once locked, the compositor itself
-// blocks all other clients from receiving input, rather than this process
-// merely asking nicely to be on top. Blocks until overlayDuration elapses
-// or Escape is pressed.
+// wlSession is everything bound from the registry that the overlay paths
+// need, plus the escape signal from the seat's keyboard.
+type wlSession struct {
+	compositor *client.Compositor
+	shm        *client.Shm
+	outputs    []*wlOutputInfo
+	escapeCh   chan struct{}
+	img        image.Image
+}
+
+// showFreezeOverlayWayland covers every output with the tinted capture so
+// the desktop appears frozen, by whichever of two mechanisms the compositor
+// offers:
 //
-// Known limitation: wl_output's geometry event gives each output's
-// position, but compositors are explicitly allowed to fake or omit it
-// (protocol note: "Some compositors ... might fake this information").
-// There's no live Wayland environment to verify this against, so this
-// assumes the portal's composited screenshot lays out outputs at their
-// wl_output logical positions — true for the common compositors (GNOME,
-// KDE, wlroots) but not guaranteed by the protocol itself.
+//   - ext-session-lock-v1, the protocol real screen lockers (swaylock,
+//     hyprlock) use. Preferred: once locked, the compositor itself stops
+//     every other client from receiving input, rather than this process
+//     merely asking to be on top.
+//   - a fullscreen xdg-shell toplevel per output, when the compositor
+//     doesn't offer the lock. Purely visual — it covers the screen but
+//     enforces nothing — and it's what KDE/KWin gets, since KWin does not
+//     advertise ext_session_lock_manager_v1 to ordinary clients.
+//
+// GNOME offers neither to a client (mutter implements no session lock and
+// no layer shell), so there the overlay is skipped; the screenshot itself
+// still saves. Blocks until overlayDuration elapses or Escape is pressed.
 func showFreezeOverlayWayland(img image.Image) {
 	display, err := client.Connect("")
 	if err != nil {
@@ -58,10 +74,13 @@ func showFreezeOverlayWayland(img image.Image) {
 		shm         *client.Shm
 		seat        *client.Seat
 		lockManager *ext_session_lock.ExtSessionLockManager
+		wmBase      *xdg_shell.WmBase
 		outputs     []*wlOutputInfo
 	)
 
 	registry.SetGlobalHandler(func(e client.RegistryGlobalEvent) {
+		debugf("wayland: global %s v%d", e.Interface, e.Version)
+
 		switch e.Interface {
 		case "wl_compositor":
 			compositor = client.NewCompositor(display.Context())
@@ -75,69 +94,63 @@ func showFreezeOverlayWayland(img image.Image) {
 		case "wl_output":
 			output := client.NewOutput(display.Context())
 			registry.Bind(e.Name, e.Interface, e.Version, output)
-			info := &wlOutputInfo{output: output}
+			info := &wlOutputInfo{output: output, scale: 1}
 			output.SetGeometryHandler(func(ge client.OutputGeometryEvent) {
 				info.x, info.y = ge.X, ge.Y
 			})
 			output.SetModeHandler(func(me client.OutputModeEvent) {
 				info.w, info.h = me.Width, me.Height
 			})
+			output.SetScaleHandler(func(se client.OutputScaleEvent) {
+				if se.Factor > 0 {
+					info.scale = se.Factor
+				}
+			})
 			outputs = append(outputs, info)
 		case "ext_session_lock_manager_v1":
 			lockManager = ext_session_lock.NewExtSessionLockManager(display.Context())
 			registry.Bind(e.Name, e.Interface, e.Version, lockManager)
+		case "xdg_wm_base":
+			wmBase = xdg_shell.NewWmBase(display.Context())
+			registry.Bind(e.Name, e.Interface, e.Version, wmBase)
+			// A compositor that pings and gets no pong assumes the client
+			// has hung and may kill it.
+			wmBase.SetPingHandler(func(pe xdg_shell.WmBasePingEvent) {
+				wmBase.Pong(pe.Serial)
+			})
 		}
 	})
 
 	wlRoundTrip(display)
 	wlRoundTrip(display)
 
-	if compositor == nil || shm == nil || lockManager == nil || len(outputs) == 0 {
-		// A missing ext_session_lock_manager_v1 is the common one: the
-		// compositor doesn't implement ext-session-lock-v1 (GNOME's mutter
-		// notably doesn't), and there's no client-side substitute.
-		debugf("wayland: missing globals: compositor=%t shm=%t seat=%t lock_manager=%t outputs=%d",
-			compositor != nil, shm != nil, seat != nil, lockManager != nil, len(outputs))
+	if compositor == nil || shm == nil || len(outputs) == 0 {
+		debugf("wayland: missing basics: compositor=%t shm=%t outputs=%d",
+			compositor != nil, shm != nil, len(outputs))
 		return
 	}
-	debugf("wayland: globals ok, %d output(s)", len(outputs))
+	debugf("wayland: %d output(s), lock_manager=%t xdg_wm_base=%t",
+		len(outputs), lockManager != nil, wmBase != nil)
 
-	var keyboard *client.Keyboard
+	session := &wlSession{
+		compositor: compositor,
+		shm:        shm,
+		outputs:    outputs,
+		escapeCh:   make(chan struct{}, 1),
+		img:        img,
+	}
+
 	if seat != nil {
-		keyboard, _ = seat.GetKeyboard()
-	}
-
-	lock, err := lockManager.Lock()
-	if err != nil || lock == nil {
-		debugf("wayland: lock request failed: %v", err)
-		return
-	}
-
-	lockedCh := make(chan struct{}, 1)
-	finishedCh := make(chan struct{}, 1)
-	lock.SetLockedHandler(func(ext_session_lock.ExtSessionLockLockedEvent) {
-		select {
-		case lockedCh <- struct{}{}:
-		default:
-		}
-	})
-	lock.SetFinishedHandler(func(ext_session_lock.ExtSessionLockFinishedEvent) {
-		select {
-		case finishedCh <- struct{}{}:
-		default:
-		}
-	})
-
-	escapeCh := make(chan struct{}, 1)
-	if keyboard != nil {
-		keyboard.SetKeyHandler(func(e client.KeyboardKeyEvent) {
-			if e.Key == waylandKeyEscape && client.KeyboardKeyState(e.State) == client.KeyboardKeyStatePressed {
-				select {
-				case escapeCh <- struct{}{}:
-				default:
+		if keyboard, err := seat.GetKeyboard(); err == nil && keyboard != nil {
+			keyboard.SetKeyHandler(func(e client.KeyboardKeyEvent) {
+				if e.Key == waylandKeyEscape && client.KeyboardKeyState(e.State) == client.KeyboardKeyStatePressed {
+					select {
+					case session.escapeCh <- struct{}{}:
+					default:
+					}
 				}
-			}
-		})
+			})
+		}
 	}
 
 	stop := make(chan struct{})
@@ -155,15 +168,40 @@ func showFreezeOverlayWayland(img image.Image) {
 	}()
 	defer close(stop)
 
-	imgBounds := img.Bounds()
+	switch {
+	case lockManager != nil:
+		session.lockOverlay(lockManager)
+	case wmBase != nil:
+		session.fullscreenOverlay(wmBase)
+	default:
+		debugf("wayland: compositor offers neither a session lock nor xdg-shell; skipping the overlay")
+	}
+}
+
+// lockOverlay covers every output with an ext-session-lock-v1 lock surface.
+func (s *wlSession) lockOverlay(manager *ext_session_lock.ExtSessionLockManager) {
+	lock, err := manager.Lock()
+	if err != nil || lock == nil {
+		debugf("wayland: lock request failed: %v", err)
+		return
+	}
+
+	lockedCh := make(chan struct{}, 1)
+	finishedCh := make(chan struct{}, 1)
+	lock.SetLockedHandler(func(ext_session_lock.ExtSessionLockLockedEvent) {
+		signal(lockedCh)
+	})
+	lock.SetFinishedHandler(func(ext_session_lock.ExtSessionLockFinishedEvent) {
+		signal(finishedCh)
+	})
 
 	// The lock surfaces have to be created and painted first: the
 	// compositor sends `locked` only once every output is covered by a lock
 	// surface with a committed buffer. Waiting for `locked` before creating
-	// them deadlocks — the compositor is waiting on the client and the
-	// client on the compositor — which is why no overlay appeared at all.
-	for _, o := range outputs {
-		surface, err := compositor.CreateSurface()
+	// them deadlocks — the compositor waiting on the client and the client
+	// on the compositor.
+	for _, o := range s.outputs {
+		surface, err := s.compositor.CreateSurface()
 		if err != nil {
 			debugf("wayland: create surface failed: %v", err)
 			continue
@@ -175,65 +213,38 @@ func showFreezeOverlayWayland(img image.Image) {
 			debugf("wayland: get lock surface failed: %v", err)
 			continue
 		}
-		debugf("wayland: lock surface created for output at %d,%d %dx%d", o.x, o.y, o.w, o.h)
 		o.lockSurface = lockSurface
 
 		info := o
 		lockSurface.SetConfigureHandler(func(ce ext_session_lock.ExtSessionLockSurfaceConfigureEvent) {
 			lockSurface.AckConfigure(ce.Serial)
-
-			w, h := int32(ce.Width), int32(ce.Height)
-			debugf("wayland: configure %dx%d", w, h)
-			if w == 0 || h == 0 {
-				return
-			}
-
-			crop := image.Rect(int(info.x), int(info.y), int(info.x)+int(w), int(info.y)+int(h)).Intersect(imgBounds)
-			buf := buildWaylandBuffer(shm, tintWhite(img, crop), w, h)
-			if buf == nil {
-				debugf("wayland: buffer allocation failed for %dx%d", w, h)
-				return
-			}
-
-			surface.Attach(buf, 0, 0)
-			// Attaching a buffer isn't enough on its own — a commit only
-			// presents the parts of it the client marked damaged.
-			surface.DamageBuffer(0, 0, w, h)
-			surface.Commit()
+			debugf("wayland: lock surface configure %dx%d", ce.Width, ce.Height)
+			s.paint(info, int32(ce.Width), int32(ce.Height))
 		})
 	}
 
-	// Now the lock can be waited on. `finished` means the compositor
-	// refused or dropped it, so there's nothing on screen to keep up;
-	// anything else — including a compositor that never gets around to
-	// confirming — leaves the surfaces up for their full duration, since
-	// they're painted and visible either way.
 	locked, aborted := false, false
 	select {
 	case <-lockedCh:
 		debugf("wayland: compositor confirmed the lock")
 		locked = true
 	case <-finishedCh:
-		// The compositor refused or dropped the lock; there's nothing on
-		// screen to keep up.
 		debugf("wayland: compositor finished the lock (refused or dropped)")
 		aborted = true
 	case <-time.After(2 * time.Second):
 		debugf("wayland: lock never confirmed, keeping the surfaces up anyway")
-		// Never confirmed, but the surfaces are painted and visible, so
-		// they stay up for their full duration anyway.
 	}
 
 	if !aborted {
 		select {
-		case <-escapeCh:
+		case <-s.escapeCh:
 		case <-finishedCh:
 			locked = false
 		case <-time.After(overlayDuration):
 		}
 	}
 
-	for _, o := range outputs {
+	for _, o := range s.outputs {
 		if o.lockSurface != nil {
 			o.lockSurface.Destroy()
 		}
@@ -248,6 +259,123 @@ func showFreezeOverlayWayland(img image.Image) {
 		lock.UnlockAndDestroy()
 	} else {
 		lock.Destroy()
+	}
+}
+
+// fullscreenOverlay covers every output with a fullscreen xdg-shell
+// toplevel. Used where there's no session lock to be had — it can't stop
+// input reaching what's underneath, but it does cover the screen, which is
+// what the overlay is for.
+func (s *wlSession) fullscreenOverlay(wmBase *xdg_shell.WmBase) {
+	for _, o := range s.outputs {
+		surface, err := s.compositor.CreateSurface()
+		if err != nil {
+			debugf("wayland: create surface failed: %v", err)
+			continue
+		}
+		o.surface = surface
+
+		xdgSurface, err := wmBase.GetXdgSurface(surface)
+		if err != nil {
+			debugf("wayland: get xdg surface failed: %v", err)
+			continue
+		}
+		o.xdgSurface = xdgSurface
+
+		toplevel, err := xdgSurface.GetToplevel()
+		if err != nil {
+			debugf("wayland: get toplevel failed: %v", err)
+			continue
+		}
+		o.toplevel = toplevel
+
+		toplevel.SetTitle("Snipp")
+		toplevel.SetAppId("snipp")
+		toplevel.SetFullscreen(o.output)
+
+		// The toplevel's configure carries the size the compositor wants;
+		// it arrives before the xdg_surface configure that commits the
+		// state, so by the time the paint below runs the size is known.
+		// Until then, fall back to the output's own mode.
+		info := o
+		w, h := o.w, o.h
+		toplevel.SetConfigureHandler(func(ce xdg_shell.ToplevelConfigureEvent) {
+			debugf("wayland: toplevel configure %dx%d", ce.Width, ce.Height)
+			if ce.Width > 0 && ce.Height > 0 {
+				w, h = ce.Width, ce.Height
+			}
+		})
+		xdgSurface.SetConfigureHandler(func(ce xdg_shell.SurfaceConfigureEvent) {
+			xdgSurface.AckConfigure(ce.Serial)
+			s.paint(info, w, h)
+		})
+
+		// An initial commit with no buffer attached is what asks the
+		// compositor for that first configure.
+		surface.Commit()
+	}
+
+	select {
+	case <-s.escapeCh:
+	case <-time.After(overlayDuration):
+	}
+
+	for _, o := range s.outputs {
+		if o.toplevel != nil {
+			o.toplevel.Destroy()
+		}
+		if o.xdgSurface != nil {
+			o.xdgSurface.Destroy()
+		}
+		if o.surface != nil {
+			o.surface.Destroy()
+		}
+	}
+}
+
+// paint fills one output's surface with its slice of the capture. w and h
+// are the surface size in logical pixels; the buffer is built at the
+// output's scale, since the capture is in physical ones.
+func (s *wlSession) paint(o *wlOutputInfo, w, h int32) {
+	if w <= 0 || h <= 0 || o.surface == nil {
+		return
+	}
+
+	scale := o.scale
+	if scale < 1 {
+		scale = 1
+	}
+	bufW, bufH := w*scale, h*scale
+
+	crop := image.Rect(
+		int(o.x*scale), int(o.y*scale),
+		int(o.x*scale+bufW), int(o.y*scale+bufH),
+	).Intersect(s.img.Bounds())
+
+	buf := buildWaylandBuffer(s.shm, tintWhite(s.img, crop), bufW, bufH)
+	if buf == nil {
+		debugf("wayland: buffer allocation failed for %dx%d", bufW, bufH)
+		return
+	}
+
+	s.surfaceCommit(o.surface, buf, scale, bufW, bufH)
+}
+
+// surfaceCommit attaches buf and presents it. Attaching alone shows
+// nothing: a commit only presents the regions the client marked damaged.
+func (s *wlSession) surfaceCommit(surface *client.Surface, buf *client.Buffer, scale, bufW, bufH int32) {
+	surface.Attach(buf, 0, 0)
+	surface.SetBufferScale(scale)
+	surface.DamageBuffer(0, 0, bufW, bufH)
+	surface.Commit()
+}
+
+// signal delivers on ch without ever blocking, for handlers that run on the
+// dispatch goroutine and must not stall it.
+func signal(ch chan struct{}) {
+	select {
+	case ch <- struct{}{}:
+	default:
 	}
 }
 
