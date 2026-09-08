@@ -48,6 +48,11 @@ with the installers attached, named after the short commit hash and marked
 as the `latest` release. That same short hash is stamped into the app at
 build time as its version, which is what the updater compares.
 
+Only that one release is kept: publishing a new one deletes every earlier
+release and its tag, the same way old workflow runs and artifacts are
+pruned. There is no download of an older build — the install and update
+links always point at the current one.
+
 ## Requirements
 
 - Windows: none beyond the OS itself.

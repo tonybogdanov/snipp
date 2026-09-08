@@ -83,6 +83,41 @@ jobs:
             artifacts/snipp-installer.exe
             artifacts/snipp-installer
 
+      # Runs here rather than in the cleanup job below so it can only ever
+      # happen after the new release exists, and only on the push that
+      # created it.
+      - name: Delete every release but this one
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const keep = "${{ steps.sha.outputs.short }}";
+
+            const releases = await github.paginate(github.rest.repos.listReleases, {
+              owner, repo,
+              per_page: 100,
+            });
+
+            for (const release of releases) {
+              if (release.tag_name === keep) continue;
+              try {
+                await github.rest.repos.deleteRelease({
+                  owner, repo, release_id: release.id,
+                });
+                // Deleting a release leaves its tag behind, which still
+                // shows up in the releases UI as a bare tag.
+                await github.rest.git.deleteRef({
+                  owner, repo, ref: `tags/${release.tag_name}`,
+                });
+                console.log(`deleted release and tag ${release.tag_name}`);
+              } catch (e) {
+                // A concurrent run may have deleted it already, or the tag
+                // may be gone while the release wasn't; neither is worth
+                // failing the build over.
+                console.log(`skipping ${release.tag_name}: ${e.message}`);
+              }
+            }
+
   cleanup:
     runs-on: ubuntu-latest
     steps:
