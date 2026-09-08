@@ -16,6 +16,7 @@ func onReady() {
 
 	screenshot := systray.AddMenuItem("Take Screenshot", "Take a screenshot")
 	systray.AddSeparator()
+	update := systray.AddMenuItem("Update Snipp", "Check for a newer release and install it")
 	quit := systray.AddMenuItem("Quit", "Quit Snipp")
 
 	systray.SetOnTapped(takeScreenshot)
@@ -25,6 +26,10 @@ func onReady() {
 			select {
 			case <-screenshot.ClickedCh:
 				takeScreenshot()
+			case <-update.ClickedCh:
+				// off the menu loop: the check and download block on the
+				// network, and the alerts they raise are modal.
+				go updateSnipp()
 			case <-quit.ClickedCh:
 				systray.Quit()
 				return

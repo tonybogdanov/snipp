@@ -9,12 +9,20 @@ cd "$root"
 
 mkdir -p artifacts
 export GOOS=linux GOARCH=amd64 CGO_ENABLED=0
-go build -o artifacts/snipp .
+
+# The release built from this commit is tagged with its short hash, so
+# stamping the same value in gives the in-app updater something to compare
+# against.
+# Sliced from the full hash rather than via --short, which widens the
+# abbreviation when it would be ambiguous; the release tag is a plain
+# 7-character slice of the same hash and the two have to match exactly.
+version="$(git rev-parse HEAD | cut -c1-7)"
+
+go build -ldflags "-X main.version=$version" -o artifacts/snipp .
 echo "Built $root/artifacts/snipp"
 
-payload="cmd/installer/payload/linux.bin"
-cp artifacts/snipp "$payload"
-trap 'git checkout -- "$payload"' EXIT
-
+# The installer carries no payload — it downloads the snipp binary from the
+# latest release at run time — so it doesn't depend on the binary built
+# above and needs no version stamp of its own.
 go build -o artifacts/snipp-installer ./cmd/installer
 echo "Built $root/artifacts/snipp-installer"

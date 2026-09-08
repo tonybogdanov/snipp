@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -38,7 +39,9 @@ func run() {
 
 	screenW, _, _ := procGetSystemMetrics.Call(smCXScreen)
 	screenH, _, _ := procGetSystemMetrics.Call(smCYScreen)
-	const winW, winH = 400, 180
+	// Tall enough for the multi-line messages install() can return (an
+	// offline explanation is three short lines).
+	const winW, winH = 420, 240
 	x := (int32(screenW) - winW) / 2
 	y := (int32(screenH) - winH) / 2
 
@@ -63,7 +66,7 @@ func run() {
 	hwndLabel, _, _ = procCreateWindowExW.Call(
 		0, uintptr(unsafe.Pointer(labelClass)), uintptr(unsafe.Pointer(labelText)),
 		uintptr(wsChild|wsVisible),
-		20, 20, 340, 20,
+		20, 20, 360, 90,
 		hwndMain, 0, hInstance, 0,
 	)
 
@@ -71,7 +74,7 @@ func run() {
 	hwndProgress, _, _ = procCreateWindowExW.Call(
 		0, uintptr(unsafe.Pointer(progressClass)), 0,
 		uintptr(wsChild|wsVisible|pbsMarquee),
-		20, 55, 340, 20,
+		20, 120, 360, 20,
 		hwndMain, 0, hInstance, 0,
 	)
 	procSendMessageW.Call(hwndProgress, pbmSetMarquee, 1, 30)
@@ -81,7 +84,7 @@ func run() {
 	hwndButton, _, _ = procCreateWindowExW.Call(
 		0, uintptr(unsafe.Pointer(buttonClass)), uintptr(unsafe.Pointer(buttonText)),
 		uintptr(wsChild|bsPushButton),
-		150, 95, 100, 28,
+		160, 160, 100, 28,
 		hwndMain, uintptr(idClose), hInstance, 0,
 	)
 
@@ -89,7 +92,7 @@ func run() {
 	procUpdateWindow.Call(hwndMain)
 
 	go func() {
-		install()
+		installMessage = install()
 		procPostMessageW.Call(hwndMain, wmInstallDone, 0, 0)
 	}()
 
@@ -115,7 +118,7 @@ func wndProc(hwnd, msg, wparam, lparam uintptr) uintptr {
 		installDone = true
 		procSendMessageW.Call(hwndProgress, pbmSetMarquee, 0, 0)
 		procShowWindow.Call(hwndProgress, swHide)
-		setWindowText(hwndLabel, "Snipp is installed and running.")
+		setWindowText(hwndLabel, installMessage)
 		procShowWindow.Call(hwndButton, swShow)
 		return 0
 	case wmClose:
@@ -224,6 +227,11 @@ const (
 var (
 	hwndMain, hwndLabel, hwndProgress, hwndButton uintptr
 	installDone                                   bool
+
+	// installMessage is what install() concluded — success, "already up to
+	// date", or why it couldn't. Written by the install goroutine and read
+	// by the window procedure only after wmInstallDone hands over.
+	installMessage string
 )
 
 type wndClassEx struct {
@@ -257,34 +265,43 @@ type initCommonControlsEx struct {
 	dwICC  uint32
 }
 
-// install places the embedded binary in %LOCALAPPDATA%\Snipp, registers it
-// to autostart at login, kills any already-running instance so the new
-// binary takes effect immediately, and starts it. Renaming the old exe out
-// of the way before overwriting works because Windows opens running
+// binaryName is what the app is called once installed, and binaryAsset the
+// release asset it's downloaded from — the same name here, but they're
+// distinct roles.
+const (
+	binaryName  = "snipp.exe"
+	binaryAsset = "snipp.exe"
+)
+
+// installDir is the per-user install location; no elevation needed.
+func installDir() (string, error) {
+	local := os.Getenv("LOCALAPPDATA")
+	if local == "" {
+		return "", errors.New("LOCALAPPDATA is not set")
+	}
+	return filepath.Join(local, "Snipp"), nil
+}
+
+// placeBinary writes the downloaded exe over the installed one. Renaming
+// the old exe out of the way first works because Windows opens running
 // executables with share-delete, not share-write: the rename succeeds even
 // while the old process is still executing from it.
-func install() {
-	installDir := filepath.Join(os.Getenv("LOCALAPPDATA"), "Snipp")
-	if err := os.MkdirAll(installDir, 0o755); err != nil {
-		return
-	}
-	target := filepath.Join(installDir, "snipp.exe")
+func placeBinary(target string, binary []byte) error {
 	old := target + ".old"
 
 	os.Remove(old)
 	os.Rename(target, old)
 
-	if err := os.WriteFile(target, appBinary, 0o755); err != nil {
+	if err := os.WriteFile(target, binary, 0o755); err != nil {
 		os.Rename(old, target)
-		return
+		return err
 	}
 
-	killRunning()
+	// Best-effort: Windows won't delete the old image while the previous
+	// instance is still executing from it. Whatever is left behind is
+	// removed by the Remove above on the next run.
 	os.Remove(old)
-
-	registerAutostart(target)
-
-	exec.Command(target).Start()
+	return nil
 }
 
 // killRunning stops any running snipp.exe via taskkill, with the console

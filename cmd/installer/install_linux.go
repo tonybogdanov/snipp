@@ -6,15 +6,18 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
 // run shows a pulsating zenity progress dialog while the install happens,
-// then updates that same dialog's text in place to report completion —
+// then updates that same dialog's text in place to report the outcome —
 // rather than closing it and opening a second confirmation dialog, which
 // looked like two different, inconsistent windows. Once installed, the user
-// dismisses it via the window's own close button. If zenity isn't available
-// it just installs silently rather than failing.
+// dismisses it via the window's own close button. The exception is an
+// outcome too long for that one-line text (the download couldn't happen),
+// which gets its own message dialog. If zenity isn't available the outcome
+// goes out as a notification rather than being swallowed.
 //
 // Known limitation: the dock/taskbar icon during install is zenity's own
 // generic icon, not Snipp's. --window-icon only sets the icon painted
@@ -27,7 +30,9 @@ import (
 func run() {
 	zenity, err := exec.LookPath("zenity")
 	if err != nil {
-		install()
+		// No dialog toolkit: install anyway, and report the outcome
+		// through a desktop notification if one is available.
+		notify(install())
 		return
 	}
 
@@ -42,7 +47,7 @@ func run() {
 	progress := exec.Command(zenity, args...)
 	stdin, err := progress.StdinPipe()
 	if err != nil || progress.Start() != nil {
-		install()
+		notify(install())
 		return
 	}
 
@@ -55,10 +60,40 @@ func run() {
 		}()
 	}
 
-	install()
+	message := install()
 
-	stdin.Write([]byte("# Snipp is installed and running.\n"))
+	if !strings.Contains(message, "\n") {
+		stdin.Write([]byte("# " + message + "\n"))
+		stdin.Close()
+		return
+	}
+
+	// The progress dialog's text is a single line fed through its stdin, so
+	// the multi-line messages (why the download couldn't happen, and what
+	// that means for the install) get their own dialog instead.
 	stdin.Close()
+	if progress.Process != nil {
+		progress.Process.Kill()
+		progress.Wait()
+	}
+	info(zenity, message)
+}
+
+// info shows the outcome in a plain message dialog, used for messages too
+// long for the progress dialog's one-line text.
+func info(zenity, message string) {
+	args := []string{"--info", "--title=Snipp", "--text=" + message}
+	if iconPath := writeTempIcon(); iconPath != "" {
+		defer os.Remove(iconPath)
+		args = append(args, "--window-icon="+iconPath)
+	}
+	exec.Command(zenity, args...).Run()
+}
+
+// notify is the fallback for desktops without zenity: no dialog to update,
+// so the outcome goes out as a notification instead of vanishing.
+func notify(message string) {
+	exec.Command("notify-send", "Snipp", message).Run()
 }
 
 // writeTempIcon spills the embedded icon to a temp file, since zenity's
@@ -77,39 +112,51 @@ func writeTempIcon() string {
 	return tmp.Name()
 }
 
-// install places the embedded binary in ~/.local/bin, registers it to
-// autostart at login via the XDG autostart spec, kills any already-running
-// instance so the new binary takes effect immediately, and starts it.
-// Writing to a temp file and renaming over the target is safe even if the
-// old binary is still running from it (Linux keeps the old inode open).
-func install() {
+// binaryName is what the app is called once installed, and binaryAsset the
+// release asset it's downloaded from — the same name here, but they're
+// distinct roles.
+const (
+	binaryName  = "snipp"
+	binaryAsset = "snipp"
+)
+
+// installDir is the per-user install location; no root needed.
+func installDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".local", "bin"), nil
+}
+
+// placeBinary writes the downloaded binary over the installed one. Writing
+// to a temp file and renaming over the target is safe even if the old
+// binary is still running from it (Linux keeps the old inode open).
+func placeBinary(target string, binary []byte) error {
+	tmp := target + ".new"
+
+	if err := os.WriteFile(tmp, binary, 0o755); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, target); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+// killRunning stops any running instance, so the binary in place is the
+// one running.
+func killRunning() {
+	exec.Command("pkill", "-x", "snipp").Run()
+}
+
+func registerAutostart(target string) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return
 	}
 
-	installDir := filepath.Join(home, ".local", "bin")
-	if err := os.MkdirAll(installDir, 0o755); err != nil {
-		return
-	}
-	target := filepath.Join(installDir, "snipp")
-	tmp := target + ".new"
-
-	if err := os.WriteFile(tmp, appBinary, 0o755); err != nil {
-		return
-	}
-	if err := os.Rename(tmp, target); err != nil {
-		return
-	}
-
-	exec.Command("pkill", "-x", "snipp").Run()
-
-	registerAutostart(home, target)
-
-	exec.Command(target).Start()
-}
-
-func registerAutostart(home, target string) {
 	entry := "[Desktop Entry]\n" +
 		"Type=Application\n" +
 		"Name=Snipp\n" +
